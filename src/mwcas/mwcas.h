@@ -40,7 +40,7 @@
 //
 // With the above interface/guarantees, the application can pass a reference of
 // the 'new value' fields in each word to the allocator. The allocator will
-// examine these places upon recovery. In general, MwCAS's recovery routine will
+// examine these places upon recovery. In general, PMwCAS's recovery routine will
 // deallocate the 'old values' for successful mwcas ops, and deallocate the 'new
 // values' for failed mwcas ops. See kRecycle* for all possible policies. After
 // freeing memory, the recovery routine resets the descriptor fields to null.
@@ -52,7 +52,7 @@
 // it's up to the application to decide what to do.)
 //
 // During forward processing, the application can choose to piggy back on
-// MwCAS's epoch manager for pointer stability. Depending on whether the mwcas
+// PMwCAS's epoch manager for pointer stability. Depending on whether the mwcas
 // succeeded, the descriptor free routine will deallocate memory addresses
 // stored in 'old value' or 'new value'. This means the application also need
 // not handle pointer stability itself, the MwCAS's epoch manager does it
@@ -84,7 +84,6 @@
 #include "include/environment.h"
 #include "metrics.h"
 #include "src/util/nvram.h"
-
 
 namespace pmwcas {
 
@@ -167,7 +166,7 @@ public:
     }
 
 #ifdef PMEM
-    /// Persist the content of address_
+    /// Persist the data pointed to by address_
     inline void PersistAddress() {
       NVRAM::Flush(sizeof(uint64_t*), (void*)address_);
     }

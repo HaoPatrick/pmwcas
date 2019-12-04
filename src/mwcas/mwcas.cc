@@ -650,6 +650,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
 
   for(uint32_t i = 0; i < count_ && my_status == kStatusSucceeded; ++i) {
     WordDescriptor* wd = &words_[i];
+    // Skip entries added purely for allocating memory
     if((uint64_t)wd->address_ == Descriptor::kAllocNullAddress){
       continue;
     }
