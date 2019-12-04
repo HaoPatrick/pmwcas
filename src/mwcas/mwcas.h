@@ -206,12 +206,7 @@ public:
   /// Adds information about a new word to be modifiec by the MwCAS operator.
   /// Word descriptors are stored sorted on the word address to prevent
   /// livelocks. Return value is negative if the descriptor is full.
-  /// @free_on_recycle: use the user-provided callback to free the address
-  /// stored in [oldval] (if mwcas succeeded) or [newval] (if mwcas failed).
-  /// Pre-requisite: the application is using mwcas to change memory pointers,
-  /// although technically the application can abuse this mechanism to do
-  /// anything.
-  uint32_t AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
+  int32_t AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
                     uint32_t recycle_policy = kRecycleNever);
 
   /// Reserve a slot in the words array, but don't know what the new value is
@@ -261,7 +256,7 @@ private:
 #endif
 
   /// Retrieve the index position in the descriptor of the given address.
-  int GetInsertPosition(uint64_t* addr);
+  int32_t GetInsertPosition(uint64_t* addr);
 
 #ifndef PMEM
   /// Execute the multi-word compare and swap operation.

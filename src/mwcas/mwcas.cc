@@ -321,29 +321,30 @@ void Descriptor::DefaultFreeCallback(void* context, void* p) {
   Allocator::Get()->FreeAligned(p);
 }
 
-uint32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
+int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
       uint32_t recycle_policy) {
   // IsProtected() checks are quite expensive, use DCHECK instead of RAW_CHECK.
   DCHECK(owner_partition_->garbage_list->GetEpoch()->IsProtected());
   DCHECK(IsCleanPtr(oldval));
   DCHECK(IsCleanPtr(newval) || newval == kNewValueReserved);
   int insertpos = GetInsertPosition(addr);
-  RAW_CHECK(insertpos >= 0, "invalid insert position");
-  words_[insertpos].address_ = addr;
-  words_[insertpos].old_value_ = oldval;
-  words_[insertpos].new_value_ = newval;
-  words_[insertpos].status_address_ = &status_;
-  words_[insertpos].recycle_policy_ = recycle_policy;
-  ++count_;
+  if (insertpos >= 0) {
+    words_[insertpos].address_ = addr;
+    words_[insertpos].old_value_ = oldval;
+    words_[insertpos].new_value_ = newval;
+    words_[insertpos].status_address_ = &status_;
+    words_[insertpos].recycle_policy_ = recycle_policy;
+    ++count_;
+  }
   return insertpos;
 }
 
-int Descriptor::GetInsertPosition(uint64_t* addr) {
+int32_t Descriptor::GetInsertPosition(uint64_t* addr) {
   DCHECK(uint64_t(addr) % sizeof(uint64_t) == 0);
   RAW_CHECK(count_ < DESC_CAP, "too many words");
 
-  int insertpos = count_;
-  for(int i = count_ - 1; i >= 0; i--) {
+  int32_t insertpos = count_;
+  for(int32_t i = count_ - 1; i >= 0; i--) {
     if((uint64_t)addr != Descriptor::kAllocNullAddress && words_[i].address_ == addr) {
       // Can't allow duplicate addresses because it makes the desired result of
       // the operation ambigous. If two different new values are specified for
@@ -614,6 +615,12 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
 
   // Not visible to anyone else, persist before making the descriptor visible
   if(calldepth == 0) {
+    // Sort all words in address order to avoid livelock.
+    // Note that after this, the indexes returned by AddEntry* are not valid any
+    // more and the application shouldn't rely on them once MwCAS is issued.
+    std::sort(words_, words_ + count_, [this](WordDescriptor &a, WordDescriptor &b)->bool{
+      return a.address_ < b.address_;
+    });
     RAW_CHECK(status_ == kStatusUndecided, "invalid status");
     NVRAM::Flush(sizeof(Descriptor), this);
   }
@@ -643,10 +650,6 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
     my_status = kStatusFailed;
   }
 #else
-
-  std::sort(words_, words_ + count_, [this](WordDescriptor &a, WordDescriptor &b)->bool{
-    return a.address_ < b.address_;
-  });
 
   for(uint32_t i = 0; i < count_ && my_status == kStatusSucceeded; ++i) {
     WordDescriptor* wd = &words_[i];
