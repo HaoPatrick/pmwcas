@@ -108,10 +108,22 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
   RAW_CHECK(descriptors_, "invalid descriptor array pointer");
   RAW_CHECK(pool_size_ > 0, "invalid pool size");
+  uint64_t in_progress_desc = 0, redo_words = 0, undo_words = 0;
+  Descriptor *desc_to_recover = nullptr;
 #ifdef PMDK
-  auto new_pmdk_pool = reinterpret_cast<PMDKAllocator *>(Allocator::Get())->GetPool();
-  uint64_t adjust_offset = (uint64_t) new_pmdk_pool - pmdk_pool_;
-  descriptors_ = reinterpret_cast<Descriptor *>((uint64_t) descriptors_ + adjust_offset);
+  auto pmdk_allocator = reinterpret_cast<PMDKAllocator*>(Allocator::Get());
+  auto new_pmdk_pool = pmdk_allocator->GetPool();
+  uint64_t adjust_offset = (uint64_t)new_pmdk_pool - (pmdk_pool_ & (~(1UL << 63)));
+
+  // See if we crashed after all recovery was done bue didn't finish adjusting
+  // descriptor addresses
+  if (pmdk_pool_ & (1UL << 63)) {
+    goto adjust_desc_offset;
+  }
+
+  // Must not touch the original descriptors_ value until recovery is done to
+  // avoid wrong addresses in case of repeated crashes
+  desc_to_recover = reinterpret_cast<Descriptor *>((uint64_t)descriptors_ + adjust_offset);
 #else
   Metadata *metadata = (Metadata*)((uint64_t)this - sizeof(Metadata));
   RAW_CHECK((uint64_t)metadata->initial_address == (uint64_t)metadata,
@@ -122,12 +134,14 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
   // begin recovery process
   // If it is an existing pool, see if it has anything in it
-  uint64_t in_progress_desc = 0, redo_words = 0, undo_words = 0;
-  if (descriptors_[0].status_ != Descriptor::kStatusInvalid) {
+  in_progress_desc = 0;
+  redo_words = 0;
+  undo_words = 0;
+  if (desc_to_recover[0].status_ != Descriptor::kStatusInvalid) {
 
     // Must not be a new pool which comes with everything zeroed
     for (uint32_t i = 0; i < pool_size_; ++i) {
-      auto &desc = descriptors_[i];
+      auto &desc = desc_to_recover[i];
 
       if (desc.status_ == Descriptor::kStatusInvalid) {
         // Must be a new pool - comes with everything zeroed but better
@@ -157,10 +171,10 @@ void DescriptorPool::Recovery(bool enable_stats) {
         in_progress_desc++;
         for (int w = 0; w < desc.count_; ++w) {
           auto &word = desc.words_[w];
-          if((uint64_t)word.address_ == Descriptor::kAllocNullAddress){
+          if((uint64_t)word.address_ + adjust_offset == Descriptor::kAllocNullAddress){
             continue;
           }
-          uint64_t val = Descriptor::CleanPtr(*word.address_);
+          uint64_t val = Descriptor::CleanPtr((uint64_t)word.address_ + adjust_offset);
 #ifdef PMDK
           val += adjust_offset;
 #endif
@@ -171,7 +185,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
             // descriptor, then the final value didn't make it to the field
             // (status is Undecided). In both cases we should roll back to old
             // value.
-            *word.address_ = word.old_value_;
+            *(uint64_t*)((uint64_t)word.address_ + adjust_offset) = word.old_value_;
 #ifdef PMEM
             word.PersistAddress();
 #endif
@@ -187,17 +201,17 @@ void DescriptorPool::Recovery(bool enable_stats) {
         for (int w = 0; w < desc.count_; ++w) {
           auto &word = desc.words_[w];
 
-          if((uint64_t)word.address_ == Descriptor::kAllocNullAddress){
+          if((uint64_t)word.address_ + adjust_offset == Descriptor::kAllocNullAddress){
             continue;
           }
-          uint64_t val = Descriptor::CleanPtr(*word.address_);
+          uint64_t val = Descriptor::CleanPtr(*(uint64_t*)((uint64_t)word.address_ + adjust_offset));
 #ifdef PMDK
           val += adjust_offset;
 #endif
           RAW_CHECK(val != (uint64_t) &word, "invalid field value");
 
           if (val == (uint64_t) &desc) {
-            *word.address_ = word.new_value_;
+            *(uint64_t*)((uint64_t)word.address_ + adjust_offset) = word.new_value_;
 #ifdef PMEM
             word.PersistAddress();
 #endif
@@ -209,10 +223,10 @@ void DescriptorPool::Recovery(bool enable_stats) {
       }
 
       for (int w = 0; w < desc.count_; ++w) {
-       if((uint64_t)desc.words_[w].address_ == Descriptor::kAllocNullAddress){
+       if((uint64_t)desc.words_[w].address_ + adjust_offset == Descriptor::kAllocNullAddress){
          continue;
        }
-       int64_t val = *desc.words_[w].address_;
+       int64_t val = *(uint64_t*)((uint64_t)desc.words_[w].address_ + adjust_offset);
 
         RAW_CHECK((val & ~Descriptor::kDirtyFlag) !=
             ((int64_t) &desc | Descriptor::kMwCASFlag),
@@ -228,8 +242,21 @@ void DescriptorPool::Recovery(bool enable_stats) {
               " words, rolled back " << undo_words << " words";
   }
 #ifdef PMDK
-  // Set the new pmdk_pool addr
-  pmdk_pool_ = (uint64_t) reinterpret_cast<PMDKAllocator *>(Allocator::Get())->GetPool();
+  // Set the new pmdk_pool addr with MSB to indicate that recovery is done but
+  // descriptor_ and pmdk_pool_ are not consistent with what GetPool returns
+  pmdk_pool_ = (1UL << 63) | (uint64_t)pmdk_allocator->GetPool();
+  pmdk_allocator->PersistPtr(&pmdk_pool_, sizeof(uint64_t));
+
+adjust_desc_offset:
+  // Now safe to give descriptor new address
+  descriptors_ = (Descriptor *)((uint64_t)descriptors_ + adjust_offset);
+  pmdk_allocator->PersistPtr(&descriptors_, sizeof(Descriptor*));
+
+  // Clear the MSB of pmdk_pool_ to indicate it's descriptor_ and pmdk_pool_ are
+  // consistent
+  uint64_t pool = (uint64_t)reinterpret_cast<PMDKAllocator *>(Allocator::Get())->GetPool();
+  pmdk_pool_ = pool;
+  pmdk_allocator->PersistPtr(&pmdk_pool_, sizeof(uint64_t));
 #endif
 
   InitDescriptors();
