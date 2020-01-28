@@ -63,9 +63,6 @@ PMWCAS_DEFINE_ENV()
 # PMEM_BACKEND == VOLATILE
 option(WITH_RTM "Use RTM for installing descriptors" OFF)
 if(WITH_RTM)
-  if(NOT (${PMEM_BACKEND} STREQUAL "VOLATILE"))
-    message(FATAL_ERROR "Cannot use RTM with persistence.")
-  endif()
   add_definitions(-DRTM)
 endif()
 
