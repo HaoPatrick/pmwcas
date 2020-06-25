@@ -5,6 +5,7 @@
 
 trigger:
 - dev
+- ci
 
 pool: dis-03
 
@@ -15,11 +16,14 @@ stages:
     strategy:
       matrix:
         PMEM:
-          backend: PMDK
+          backend: pmdk
+          cmake_arg: PMDK 
         Volatile:
-          backend: Volatile
+          backend: volatile
+          cmake_arg: Volatile
+
     steps:
-      - script: docker build -t pmwcas_$(Build.BuildId)_$(backend) .
+      - script: docker build -t pmwcas_$(Build.BuildId)_$(backend) --build-arg PMEM_BACKEND=$(cmake_arg) .
         displayName: 'Build Docker image'
 
 - stage: Test
@@ -28,9 +32,11 @@ stages:
     strategy:
       matrix:
         PMEM:
-          backend: PMDK
+          backend: pmdk
+          cmake_arg: PMDK 
         Volatile:
-          backend: Volatile
+          backend: volatile
+          cmake_arg: Volatile
     steps:
       - script: docker run --name=pmwcas_$(Build.BuildId)_$(backend)_test pmwcas_$(Build.BuildId)_$(backend) 
         displayName: 'Run tests'
