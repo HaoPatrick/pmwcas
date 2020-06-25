@@ -8,12 +8,19 @@ trigger:
 
 pool: dis-03
 
+strategy:
+  matrix:
+    PMEM:
+      backend: PMDK
+    Volatile:
+      backend: Volatile
+
 stages:
 - stage: Build
   jobs:
   - job: build_pmwcas
     steps:
-      - script: docker build -t pmwcas_$(Build.BuildId) .
+      - script: docker build -t pmwcas_$(Build.BuildId) --build-arg PMEM_BACKEND=$(backend) .
         displayName: 'Build Docker image'
 
 - stage: Test
