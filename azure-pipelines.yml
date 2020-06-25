@@ -16,67 +16,63 @@ strategy:
     Volatile:
       backend: Volatile
 
-stages:
-- stage: Build
-  jobs:
-  - job: build_pmwcas
-    steps:
-      - script: docker build -t pmwcas_$(Build.BuildId) --build-arg PMEM_BACKEND=$(backend) .
-        displayName: 'Build Docker image'
+jobs:
+- job: build_pmwcas
+  steps:
+    - script: docker build -t pmwcas_$(Build.BuildId) --build-arg PMEM_BACKEND=$(backend) .
+      displayName: 'Build Docker image'
 
-- stage: Test
-  jobs:
-  - job: test
-    steps:
-      - script: docker run --name=pmwcas_$(Build.BuildId)_test pmwcas_$(Build.BuildId) 
-        displayName: 'Run tests'
+- job: test
+  steps:
+    - script: docker run --name=pmwcas_$(Build.BuildId)_test pmwcas_$(Build.BuildId) 
+      displayName: 'Run tests'
 
-      - script: docker cp pmwcas_$(Build.BuildId)_test:/usr/src/pmwcas/build_tmp/Testing .
-        displayName: 'Copy the test results'
-      
-      - task: PublishTestResults@2
-        inputs:
-          testResultsFormat: 'CTest'
-          testResultsFiles: '**/Testing/*/Test.xml'
+    - script: docker cp pmwcas_$(Build.BuildId)_test:/usr/src/pmwcas/build_tmp/Testing .
+      displayName: 'Copy the test results'
+    
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: 'CTest'
+        testResultsFiles: '**/Testing/*/Test.xml'
+
+- job: benchmark
+  dependsOn: test
+  steps:
+    - script: docker run --name=pmwcas_$(Build.BuildId)_bench --entrypoint 
+              "/usr/src/pmwcas/build_tmp/src/benchmarks/mwcas_benchmark" pmwcas_$(Build.BuildId) 
+              --threads=4 --pmdk_pool=mwcas_pool
+      displayName: 'Run benchmarks'
+      env:
+        PMEM_IS_PMEM_FORCE: 1
+
+    - script: |
+        git clone --depth 1 -b gh-pages https://$GH_TOKEN@github.com/XiangpengHao/pmwcas.git gh-pages
+        echo $(Build.SourceVersion) $(Build.BuildId) > ./public/build_data
+        docker cp pmwcas_$(Build.BuildId)_bench:/usr/src/pmwcas/mwcas_bench_output.txt ./public/bench_data
+        cp ./gh-pages/data.json ./public/
+        cp ./public/* ./gh-pages
+        cd gh-pages 
+        python3 ./data_process.py
+        git config user.email "ci@haoxp.xyz"
+        git config user.name "cibot"
+        git add .
+        git commit -m"update benchmark result"
+        git push origin gh-pages --force
+      env:
+        GH_TOKEN: $(GITHUB_TOKEN)
+      displayName: "Publish benchmark result"
   
-  - job: benchmark
-    dependsOn: test
-    steps:
-      - script: docker run --name=pmwcas_$(Build.BuildId)_bench --entrypoint 
-               "/usr/src/pmwcas/build_tmp/src/benchmarks/mwcas_benchmark" pmwcas_$(Build.BuildId) 
-               --threads=4 --pmdk_pool=mwcas_pool
-        displayName: 'Run benchmarks'
-        env:
-          PMEM_IS_PMEM_FORCE: 1
+- job: clean
+  dependsOn: benchmark
+  steps:
+    - script: docker rm pmwcas_$(Build.BuildId)_test 
+      displayName: 'Clean the image'
+      condition: always()
 
-      - script: |
-          git clone --depth 1 -b gh-pages https://$GH_TOKEN@github.com/XiangpengHao/pmwcas.git gh-pages
-          echo $(Build.SourceVersion) $(Build.BuildId) > ./public/build_data
-          docker cp pmwcas_$(Build.BuildId)_bench:/usr/src/pmwcas/mwcas_bench_output.txt ./public/bench_data
-          cp ./gh-pages/data.json ./public/
-          cp ./public/* ./gh-pages
-          cd gh-pages 
-          python3 ./data_process.py
-          git config user.email "ci@haoxp.xyz"
-          git config user.name "cibot"
-          git add .
-          git commit -m"update benchmark result"
-          git push origin gh-pages --force
-        env:
-          GH_TOKEN: $(GITHUB_TOKEN)
-        displayName: "Publish benchmark result"
-  
-  - job: clean
-    dependsOn: benchmark
-    steps:
-      - script: docker rm pmwcas_$(Build.BuildId)_test 
-        displayName: 'Clean the image'
-        condition: always()
+    - script: docker rm pmwcas_$(Build.BuildId)_bench
+      displayName: 'Clean the image'
+      condition: always()
 
-      - script: docker rm pmwcas_$(Build.BuildId)_bench
-        displayName: 'Clean the image'
-        condition: always()
-
-      - script: docker rmi pmwcas_$(Build.BuildId) --force
-        displayName: 'Clean the container'
-        condition: always()
+    - script: docker rmi pmwcas_$(Build.BuildId) --force
+      displayName: 'Clean the container'
+      condition: always()
