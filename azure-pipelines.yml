@@ -53,7 +53,7 @@ stages:
     dependsOn: test
     steps:
       - script: docker run --name=pmwcas_$(Build.BuildId)_bench --entrypoint 
-               "/usr/src/pmwcas/build_tmp/src/benchmarks/mwcas_benchmark" pmwcas_$(Build.BuildId)_PMDK 
+               "/usr/src/pmwcas/build_tmp/src/benchmarks/mwcas_benchmark" pmwcas_$(Build.BuildId)_pmdk 
                --threads=4 --pmdk_pool=mwcas_pool
         displayName: 'Run benchmarks'
         env:
