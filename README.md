@@ -1,6 +1,6 @@
 # Persistent Multi-Word Compare-and-Swap (PMwCAS) for NVRAM
 
-[![Build Status](https://dev.azure.com/haoxiangpeng/pmwcas/_apis/build/status/XiangpengHao.pmwcas?branchName=dev)](https://dev.azure.com/haoxiangpeng/pmwcas/_build/latest?definitionId=3&branchName=dev)
+[![Build Status](https://dev.azure.com/haoxiangpeng/pmwcas/_apis/build/status/sfu-dis.pmwcas?branchName=dev)](https://dev.azure.com/haoxiangpeng/pmwcas/_build/latest?definitionId=4&branchName=dev)
 
 The PMwCAS performance is automatically tracked on every commit,
 checkout the visualization here: https://xiangpenghao.github.io/pmwcas.
