@@ -17,7 +17,7 @@ unique_ptr_t<T> make_unique_ptr_t(T* p) {
   return unique_ptr_t<T> (p,
   [](T* t) {
     t->~T();
-    Allocator::Get()->Free(t);
+    free(t);
   });
 }
 
@@ -26,7 +26,7 @@ unique_ptr_t<T> make_unique_ptr_aligned_t(T* p) {
   return unique_ptr_t<T> (p,
   [](T* t) {
     t->~T();
-    Allocator::Get()->FreeAligned(t);
+    free(t);
   });
 }
 
