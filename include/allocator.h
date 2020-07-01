@@ -19,8 +19,8 @@ class IAllocator {
                                      size_t offset) = 0;
   virtual void AllocateHuge(void **mem, size_t size) = 0;
   virtual void CAlloc(void **mem, size_t count, size_t size) = 0;
-  virtual void Free(void* bytes) = 0;
-  virtual void FreeAligned(void* bytes) = 0;
+  virtual void Free(void **mem) = 0;
+  virtual void FreeAligned(void **mem) = 0;
   virtual uint64_t GetAllocatedSize(void* bytes) = 0;
   virtual Status Validate(void* bytes) = 0;
 

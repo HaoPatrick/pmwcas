@@ -43,7 +43,6 @@ class CoreLocal {
     if (!objects_) {
       return Status::Corruption("not initialized?");
     }
-    Allocator::Get()->FreeAligned(objects_);
     free(objects_);
     objects_ = nullptr;
     next_free_object_ = 0;

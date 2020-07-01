@@ -243,7 +243,8 @@ class TlsAllocator : public IAllocator {
     /// TODO(tzwang): not implemented yet
   }
 
-  void Free(void* pBytes) override {
+  void Free(void **mem) override {
+    void* pBytes = *mem;
     auto& tls_map = GetTlsMap();
     // Extract the hidden size info
     Header* pHeader = ExtractHeader(pBytes);
@@ -255,6 +256,7 @@ class TlsAllocator : public IAllocator {
     } else {
       block_list->second.Put(pHeader);
     }
+    *mem = nullptr;
   }
 
   void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment) override {
@@ -263,9 +265,9 @@ class TlsAllocator : public IAllocator {
     Allocate(mem, nSize);
   }
 
-  void FreeAligned(void* pBytes) override {
+  void FreeAligned(void **mem) override {
     /// TODO(tzwang): take care of aligned allocations
-    return Free(pBytes);
+    return Free(mem);
   }
 
   void AllocateAlignedOffset(void **mem, size_t size, size_t alignment, size_t offset) override{
@@ -321,8 +323,9 @@ class DefaultAllocator : IAllocator {
     return;
   }
 
-  void Free(void* pBytes) override {
-    free(pBytes);
+  void Free(void **mem) override {
+    free(*mem);
+    *mem = nullptr;
   }
 
   void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment) override {
@@ -330,8 +333,8 @@ class DefaultAllocator : IAllocator {
     return Allocate(mem, nSize);
   }
 
-  void FreeAligned(void* pBytes) override {
-    return Free(pBytes);
+  void FreeAligned(void **mem) override {
+    return Free(mem);
   }
 
   void AllocateAlignedOffset(void **mem, size_t size, size_t alignment, size_t offset) override {
@@ -453,11 +456,18 @@ class PMDKAllocator : IAllocator {
     // not implemented
   }
 
-  void Free(void* pBytes) override {
-    auto oid_ptr = pmemobj_oid(pBytes);
-    TOID(char) ptr_cpy;
-    TOID_ASSIGN(ptr_cpy, oid_ptr);
-    POBJ_FREE(&ptr_cpy);
+  void Free(void **mem) override {
+    TX_BEGIN(pop) {
+      pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
+      pmemobj_tx_free(pmemobj_oid(*mem));
+      *mem = nullptr;
+    }
+    TX_ONABORT {
+      std::cout
+          << "Allocate: TXN Deallocation Error, mem cannot be a DRAM address: "
+          << mem << std::endl;
+    }
+    TX_END
   }
 
   void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment) override {
@@ -465,8 +475,8 @@ class PMDKAllocator : IAllocator {
     return Allocate(mem, nSize);
   }
 
-  void FreeAligned(void* pBytes) override {
-    return Free(pBytes);
+  void FreeAligned(void **mem) override {
+    return Free(mem);
   }
 
   void AllocateAlignedOffset(void **mem, size_t size, size_t alignment, size_t offset) override {

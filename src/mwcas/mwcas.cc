@@ -348,8 +348,8 @@ void Descriptor::Finalize() {
 #endif
 }
 
-void Descriptor::DefaultFreeCallback(void* context, void* p) {
-  Allocator::Get()->FreeAligned(p);
+void Descriptor::DefaultFreeCallback(void* context, void** mem) {
+  Allocator::Get()->FreeAligned(mem);
 }
 
 int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
@@ -825,11 +825,11 @@ void Descriptor::DeallocateMemory() {
     auto status = status_;
     if (status == kStatusSucceeded) {
       if (word.ShouldRecycleOldValue()) {
-        free_callback_(nullptr, (void*)word.GetOldValue());
+        free_callback_(nullptr, (void**)word.GetOldValuePtr());
       }
     } else if (status == kStatusFailed) {
       if (word.ShouldRecycleNewValue()) {
-        free_callback_(nullptr, (void*)word.GetNewValue());
+        free_callback_(nullptr, (void**)word.GetNewValuePtr());
       }
     }
 #if 0
@@ -841,27 +841,27 @@ void Descriptor::DeallocateMemory() {
       case kRecycleAlways:
         if (status == kStatusSucceeded) {
           if (word.old_value_ != kNewValueReserved) {
-            free_callback_(nullptr, (void*)word.old_value_);
+            free_callback_(nullptr, (void**)&word.old_value_);
           }
         } else {
           RAW_CHECK(status == kStatusFailed || status == kStatusFinished,
                     "incorrect status found on used/discarded descriptor");
           if (word.new_value_ != kNewValueReserved) {
-            free_callback_(nullptr, (void*)word.new_value_);
+            free_callback_(nullptr, (void**)&word.new_value_);
           }
         }
         break;
       case kRecycleOldOnSuccess:
         if (status == kStatusSucceeded) {
           if (word.old_value_ != kNewValueReserved) {
-            free_callback_(nullptr, (void*)word.old_value_);
+            free_callback_(nullptr, (void**)&word.old_value_);
           }
         }
         break;
       case kRecycleNewOnFailure:
         if (status != kStatusSucceeded) {
           if (word.new_value_ != kNewValueReserved) {
-            free_callback_(nullptr, (void*)word.new_value_);
+            free_callback_(nullptr, (void**)&word.new_value_);
           }
         }
         break;

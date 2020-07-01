@@ -13,7 +13,7 @@ RandomReadWriteAsyncFile::make_unique_ptr_t(RandomReadWriteAsyncFile* p) {
   [](RandomReadWriteAsyncFile* p) {
     Status s = p->Close();
     ALWAYS_ASSERT(s.ok());
-    Allocator::Get()->Free(p);
+    free(p);
   });
 }
 
