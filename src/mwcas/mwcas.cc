@@ -85,6 +85,8 @@ DescriptorPool::DescriptorPool(uint32_t requested_pool_size,
       (uint64_t) reinterpret_cast<PMDKAllocator*>(Allocator::Get())->GetPool();
 #endif
 
+  free_callbacks_ = std::make_unique<FreeCallbackArray>();
+
   InitDescriptors();
 }
 
@@ -242,7 +244,7 @@ void DescriptorPool::InitDescriptors() {
     DescriptorPartition* p = partition_table_ + i;
     for (uint32_t d = 0; d < desc_per_partition_; ++d) {
       Descriptor* desc = descriptors_ + i * desc_per_partition_ + d;
-      new (desc) Descriptor(p);
+      new (desc) Descriptor(p, free_callbacks_.get());
       desc->next_ptr_ = p->free_list;
       p->free_list = desc;
     }
@@ -257,8 +259,7 @@ void DescriptorPool::InitDescriptors() {
 
 DescriptorPool::~DescriptorPool() { MwCASMetrics::Uninitialize(); }
 
-DescriptorGuard DescriptorPool::AllocateDescriptor(
-    Descriptor::FreeCallback fc) {
+DescriptorGuard DescriptorPool::AllocateDescriptor(FreeCallbackArray::Idx fc) {
   thread_local DescriptorPartition* tls_part = nullptr;
   if (!tls_part) {
     // Sometimes e.g., benchmark data loading will create new threads when
@@ -289,17 +290,19 @@ DescriptorGuard DescriptorPool::AllocateDescriptor(
 
   MwCASMetrics::AddDescriptorAlloc();
   RAW_CHECK(desc, "null descriptor pointer");
-  desc->free_callback_ = fc ? fc : Descriptor::DefaultFreeCallback;
+  desc->callback_idx_ = fc;
 
   desc->Initialize();
 
   return DescriptorGuard(desc);
 }
 
-Descriptor::Descriptor(DescriptorPartition* partition) {
+Descriptor::Descriptor(DescriptorPartition* partition,
+                       FreeCallbackArray* callbacks) {
   count_ = 0;
   next_ptr_ = nullptr;
   owner_partition_ = partition;
+  free_callbacks_ = callbacks;
   for (uint32_t i = 0; i < DESC_CAP; ++i) {
     DCHECK(words_[i].address_ == 0x0);
     DCHECK(words_[i].old_value_ == 0x0);
@@ -346,10 +349,6 @@ void Descriptor::Finalize() {
   }
   NVRAM::Flush(sizeof(WordDescriptor) * count_, &words_);
 #endif
-}
-
-void Descriptor::DefaultFreeCallback(void* context, void** mem) {
-  Allocator::Get()->FreeAligned(mem);
 }
 
 int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
@@ -820,16 +819,18 @@ Status Descriptor::Abort() {
 #if PMWCAS_SAFE_MEMORY == 1
 void Descriptor::DeallocateMemory() {
   // Free the memory associated with the descriptor if needed
+  auto free_callback = free_callbacks_->GetFreeCallback(callback_idx_);
+
   for (uint32_t i = 0; i < count_; ++i) {
     auto& word = words_[i];
     auto status = status_;
     if (status == kStatusSucceeded) {
       if (word.ShouldRecycleOldValue()) {
-        free_callback_(nullptr, (void**)word.GetOldValuePtr());
+        free_callback((void**)word.GetOldValuePtr());
       }
     } else if (status == kStatusFailed) {
       if (word.ShouldRecycleNewValue()) {
-        free_callback_(nullptr, (void**)word.GetNewValuePtr());
+        free_callback((void**)word.GetNewValuePtr());
       }
     }
 #if 0
@@ -841,20 +842,20 @@ void Descriptor::DeallocateMemory() {
       case kRecycleAlways:
         if (status == kStatusSucceeded) {
           if (word.old_value_ != kNewValueReserved) {
-            free_callback_(nullptr, (void**)&word.old_value_);
+            free_callback((void**)&word.old_value_);
           }
         } else {
           RAW_CHECK(status == kStatusFailed || status == kStatusFinished,
                     "incorrect status found on used/discarded descriptor");
           if (word.new_value_ != kNewValueReserved) {
-            free_callback_(nullptr, (void**)&word.new_value_);
+            free_callback((void**)&word.new_value_);
           }
         }
         break;
       case kRecycleOldOnSuccess:
         if (status == kStatusSucceeded) {
           if (word.old_value_ != kNewValueReserved) {
-            free_callback_(nullptr, (void**)&word.old_value_);
+            free_callback((void**)&word.old_value_);
           }
         }
         break;

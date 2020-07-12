@@ -93,6 +93,54 @@ class DescriptorPool;
 #define PMWCAS_THREAD_HELP 1
 #define PMWCAS_SAFE_MEMORY 1
 
+class FreeCallbackArray {
+ public:
+  /// FreeCallbacks are invoked on a pointer that *points* to another pointer
+  /// that points to the memory region to be freed (thus the double pointer).
+  /// We expect that they clear the void* pointer (i.e. set it to nullptr) to
+  /// denote a succeeded reclamation.
+
+  /// A FreeCallbackArray is an array of FreeCallback function pointers. It is
+  /// never persisted (i.e. it resides in volatile memory), but it should have
+  /// the same layout after restarting the process so the persisted offset in
+  /// each descriptor can reliably refer to the same callback function even if
+  /// it is loaded into a different virtual address.
+
+  /// Signaure for garbage free callback
+  using FreeCallback = void (*)(void** mem);
+  using Idx = size_t;
+
+  /// Maximum number of FreeCallbacks that can be registered
+  static constexpr Idx kFreeCallbackCapacity = 16;
+
+  /// The default free callback used if no callback is specified by the user
+  static void DefaultFreeCallback(void** mem) { Allocator::Get()->Free(mem); }
+
+  FreeCallbackArray() { RegisterFreeCallback(DefaultFreeCallback); }
+
+  ~FreeCallbackArray() = default;
+
+  FreeCallbackArray(const FreeCallbackArray&) = delete;
+  FreeCallbackArray& operator=(const FreeCallbackArray&) = delete;
+
+  /// Register a FreeCallback in the array
+  void RegisterFreeCallback(FreeCallback fc) {
+    RAW_CHECK(next_ < kFreeCallbackCapacity, "too many free callbacks");
+    RAW_CHECK(fc != nullptr, "free callbacks cannot be nullptr");
+    array_[next_++] = fc;
+  }
+
+  /// Look up a FreeCallback in the array
+  FreeCallback GetFreeCallback(Idx index) const {
+    RAW_CHECK(index < next_, "invalid free callback");
+    return array_[index];
+  }
+
+ private:
+  FreeCallback array_[kFreeCallbackCapacity];
+  size_t next_{0};
+};
+
 class alignas(kCacheLineSize) Descriptor {
   template <typename T>
   friend class MwcTargetField;
@@ -151,12 +199,6 @@ class alignas(kCacheLineSize) Descriptor {
   static inline uint64_t CleanPtr(uint64_t ptr) {
     return ptr & ~(kMwCASFlag | kCondCASFlag | kDirtyFlag);
   }
-
-  /// Signaure for garbage free callback (see free_callback_ below)
-  typedef void (*FreeCallback)(void* context, void** mem);
-
-  /// The default free callback used if no callback is specified by the user
-  static void DefaultFreeCallback(void* context, void** mem);
 
   /// Specifies what word to update in the mwcas, storing before/after images so
   /// others may help along. This also servers as the descriptor for conditional
@@ -231,7 +273,7 @@ class alignas(kCacheLineSize) Descriptor {
 
   /// Function for initializing a Descriptor.
   /// Called only during system initialization/recovery.
-  Descriptor(DescriptorPartition* partition);
+  Descriptor(DescriptorPartition* partition, FreeCallbackArray* callbacks);
 
   /// Function for reinitializing a finalized Descriptor.
   /// Called only on newly allocated Descriptors at runtime.
@@ -397,7 +439,12 @@ class alignas(kCacheLineSize) Descriptor {
 
   /// A callback for freeing the words listed in [words_] when recycling the
   /// descriptor. Optional: only for applications that use it.
-  FreeCallback free_callback_;
+  FreeCallbackArray::Idx callback_idx_;
+
+  /// A reference to the array of callbacks. It should only be dereferenced at
+  /// runtime and should never be dereferenced directly upon recovery; instead
+  /// the recovery protocol will fix it to point to the new array.
+  FreeCallbackArray* free_callbacks_;
 
   /// Array of word descriptors bounded DESC_CAP
   alignas(kCacheLineSize) WordDescriptor words_[DESC_CAP];
@@ -518,6 +565,9 @@ class DescriptorPool {
   /// Track the pmdk pool for recovery purpose
   uint64_t pmdk_pool_;
 
+  /// Array of callbacks to be invoked during memory deallocation
+  std::unique_ptr<FreeCallbackArray> free_callbacks_;
+
   void InitDescriptors();
 
  public:
@@ -539,12 +589,15 @@ class DescriptorPool {
   EpochManager* GetEpoch() { return &epoch_; }
 
   // Get a free descriptor from the pool.
-  DescriptorGuard AllocateDescriptor(Descriptor::FreeCallback fc);
+  DescriptorGuard AllocateDescriptor(FreeCallbackArray::Idx fc);
 
   // Allocate a free descriptor from the pool using default allocate and
   // free callbacks.
-  inline DescriptorGuard AllocateDescriptor() {
-    return AllocateDescriptor(nullptr);
+  inline DescriptorGuard AllocateDescriptor() { return AllocateDescriptor(0); }
+
+  // Register a FreeCallback in the array
+  void RegisterFreeCallback(FreeCallbackArray::FreeCallback fc) {
+    return free_callbacks_->RegisterFreeCallback(fc);
   }
 };
 
