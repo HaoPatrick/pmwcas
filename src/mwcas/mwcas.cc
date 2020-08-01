@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
-#include "include/pmwcas.h"
 #include "mwcas/mwcas.h"
+
+#include "include/pmwcas.h"
 #include "util/atomics.h"
 
 namespace pmwcas {
@@ -12,7 +13,7 @@ CoreLocal<MwCASMetrics*> MwCASMetrics::instance;
 uint64_t RecoveryMetrics::stats_[RecoveryStats::MAX_RECOVERY_ITEM] = {0};
 
 DescriptorPartition::DescriptorPartition(EpochManager* epoch,
-    DescriptorPool* pool)
+                                         DescriptorPool* pool)
     : desc_pool(pool), allocated_desc(0) {
   free_list = nullptr;
   garbage_list = new GarbageListUnsafe;
@@ -25,14 +26,14 @@ DescriptorPartition::~DescriptorPartition() {
   delete garbage_list;
 }
 
-DescriptorPool::DescriptorPool(
-    uint32_t requested_pool_size, uint32_t requested_partition_count, bool enable_stats)
+DescriptorPool::DescriptorPool(uint32_t requested_pool_size,
+                               uint32_t requested_partition_count,
+                               bool enable_stats)
     : pool_size_(0),
       desc_per_partition_(0),
       partition_count_(0),
       partition_table_(nullptr),
       next_partition_(0) {
-
   MwCASMetrics::enabled = enable_stats;
   if (enable_stats) {
     auto s = MwCASMetrics::Initialize();
@@ -50,8 +51,8 @@ DescriptorPool::DescriptorPool(
 
   // Round partitions to a power of two but no higher than 1024
   partition_count_ = 1;
-  for(uint32_t exp = 1; exp < 10; exp++) {
-    if(requested_partition_count <= partition_count_) {
+  for (uint32_t exp = 1; exp < 10; exp++) {
+    if (requested_partition_count <= partition_count_) {
       break;
     }
     partition_count_ *= 2;
@@ -60,11 +61,12 @@ DescriptorPool::DescriptorPool(
   desc_per_partition_ = pool_size_ / partition_count_;
   RAW_CHECK(desc_per_partition_ > 0, "descriptor per partition is 0");
 
-  partition_table_ = (DescriptorPartition*)malloc(sizeof(DescriptorPartition)*partition_count_);
+  partition_table_ = (DescriptorPartition*)malloc(sizeof(DescriptorPartition) *
+                                                  partition_count_);
   RAW_CHECK(nullptr != partition_table_, "out of memory");
 
-  for(uint32_t i = 0; i < partition_count_; ++i) {
-    new(&partition_table_[i]) DescriptorPartition(&epoch_, this);
+  for (uint32_t i = 0; i < partition_count_; ++i) {
+    new (&partition_table_[i]) DescriptorPartition(&epoch_, this);
   }
 
   // A new descriptor pool area always comes zeroed.
@@ -72,13 +74,13 @@ DescriptorPool::DescriptorPool(
 
   // Create a new pool
   Allocator::Get()->AllocateAligned(
-      (void **) &descriptors_,
-      sizeof(Descriptor) * pool_size_, kCacheLineSize);
+      (void**)&descriptors_, sizeof(Descriptor) * pool_size_, kCacheLineSize);
   RAW_CHECK(descriptors_, "out of memory");
 
 #ifdef PMDK
   // Set the new pmdk_pool addr
-  pmdk_pool_ = (uint64_t) reinterpret_cast<PMDKAllocator*>(Allocator::Get())->GetPool();
+  pmdk_pool_ =
+      (uint64_t) reinterpret_cast<PMDKAllocator*>(Allocator::Get())->GetPool();
 #endif
 
   InitDescriptors();
@@ -92,29 +94,32 @@ void DescriptorPool::Recovery(bool enable_stats) {
   auto s = MwCASMetrics::Initialize();
   RAW_CHECK(s.ok(), "failed initializing metric objects");
 
-  new(&epoch_) EpochManager;
+  new (&epoch_) EpochManager;
   s = epoch_.Initialize();
   RAW_CHECK(s.ok(), "epoch initialization failure");
 
   RAW_CHECK(partition_count_ > 0, "invalid partition count");
-  partition_table_ = (DescriptorPartition *) malloc(sizeof(DescriptorPartition) * partition_count_);
+  partition_table_ = (DescriptorPartition*)malloc(sizeof(DescriptorPartition) *
+                                                  partition_count_);
   RAW_CHECK(nullptr != partition_table_, "out of memory");
 
   for (uint32_t i = 0; i < partition_count_; ++i) {
-    new(&partition_table_[i]) DescriptorPartition(&epoch_, this);
+    new (&partition_table_[i]) DescriptorPartition(&epoch_, this);
   }
 
   RAW_CHECK(descriptors_, "invalid descriptor array pointer");
   RAW_CHECK(pool_size_ > 0, "invalid pool size");
 
 #ifdef PMDK
-  auto new_pmdk_pool = reinterpret_cast<PMDKAllocator *>(Allocator::Get())->GetPool();
+  auto new_pmdk_pool =
+      reinterpret_cast<PMDKAllocator*>(Allocator::Get())->GetPool();
 #else
   static_assert(false, "Only recovery with PMDK is supported");
 #endif
 
-  uint64_t adjust_offset = (uint64_t) new_pmdk_pool - pmdk_pool_;
-  descriptors_ = reinterpret_cast<Descriptor *>((uint64_t) descriptors_ + adjust_offset);
+  uint64_t adjust_offset = (uint64_t)new_pmdk_pool - pmdk_pool_;
+  descriptors_ =
+      reinterpret_cast<Descriptor*>((uint64_t)descriptors_ + adjust_offset);
 
   // begin recovery process
   // Iterate over the whole desc pool, see if there's anything we can do
@@ -216,7 +221,8 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
 #ifdef PMDK
   // Set the new pmdk_pool addr
-  pmdk_pool_ = (uint64_t) reinterpret_cast<PMDKAllocator *>(Allocator::Get())->GetPool();
+  pmdk_pool_ =
+      (uint64_t) reinterpret_cast<PMDKAllocator*>(Allocator::Get())->GetPool();
 #endif
   NVRAM::Flush(sizeof(pmdk_pool_), &pmdk_pool_);
 
@@ -235,9 +241,9 @@ void DescriptorPool::InitDescriptors() {
             "provided pool size is less than partition count");
 
   for (uint32_t i = 0; i < partition_count_; ++i) {
-    DescriptorPartition *p = partition_table_ + i;
+    DescriptorPartition* p = partition_table_ + i;
     for (uint32_t d = 0; d < desc_per_partition_; ++d) {
-      Descriptor *desc = descriptors_ + i * desc_per_partition_ + d;
+      Descriptor* desc = descriptors_ + i * desc_per_partition_ + d;
       new (desc) Descriptor(p);
       desc->next_ptr_ = p->free_list;
       p->free_list = desc;
@@ -245,29 +251,28 @@ void DescriptorPool::InitDescriptors() {
   }
 }
 
-DescriptorPool::~DescriptorPool() {
-  MwCASMetrics::Uninitialize();
-}
+DescriptorPool::~DescriptorPool() { MwCASMetrics::Uninitialize(); }
 
-DescriptorGuard DescriptorPool::AllocateDescriptor(Descriptor::FreeCallback fc) {
+DescriptorGuard DescriptorPool::AllocateDescriptor(
+    Descriptor::FreeCallback fc) {
   thread_local DescriptorPartition* tls_part = nullptr;
-  if(!tls_part) {
+  if (!tls_part) {
     // Sometimes e.g., benchmark data loading will create new threads when
     // starting real work. So % partition_count_ here is safe. This is so far
     // the only safe case allowed.
     auto index = next_partition_.fetch_add(1, std::memory_order_seq_cst) %
-      partition_count_;
+                 partition_count_;
 
     // TODO: Currently we actually require strictly TLS partitions - there is no
     // CC whatsoever for partitions.
     tls_part = &partition_table_[index];
 
     // Track the partition pointer handed out to this thread.
-    Thread::RegisterTls((uint64_t*)&tls_part, (uint64_t)nullptr);
+    Thread::RegisterTls((uint64_t*)&tls_part, (uint64_t) nullptr);
   }
 
   Descriptor* desc = tls_part->free_list;
-  while(!desc) {
+  while (!desc) {
     // See if we can scavenge some descriptors from the garbage list
     tls_part->garbage_list->GetEpoch()->BumpCurrentEpoch();
     auto scavenged = tls_part->garbage_list->Scavenge();
@@ -304,7 +309,7 @@ void Descriptor::DefaultFreeCallback(void* context, void* p) {
 }
 
 int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
-      uint32_t recycle_policy) {
+                             uint32_t recycle_policy) {
   // IsProtected() checks are quite expensive, use DCHECK instead of RAW_CHECK.
   DCHECK(owner_partition_->garbage_list->GetEpoch()->IsProtected());
   DCHECK(IsCleanPtr(oldval));
@@ -326,8 +331,9 @@ int32_t Descriptor::GetInsertPosition(uint64_t* addr) {
   RAW_CHECK(count_ < DESC_CAP, "too many words");
 
   int32_t insertpos = count_;
-  for(int32_t i = count_ - 1; i >= 0; i--) {
-    if((uint64_t)addr != Descriptor::kAllocNullAddress && words_[i].address_ == addr) {
+  for (int32_t i = count_ - 1; i >= 0; i--) {
+    if ((uint64_t)addr != Descriptor::kAllocNullAddress &&
+        words_[i].address_ == addr) {
       // Can't allow duplicate addresses because it makes the desired result of
       // the operation ambigous. If two different new values are specified for
       // the same address, what is the correct result? Also, if the operation
@@ -341,9 +347,9 @@ int32_t Descriptor::GetInsertPosition(uint64_t* addr) {
 
 #ifdef PMEM
 uint32_t Descriptor::ReadPersistStatus() {
-  auto curr_status = *& status_;
+  auto curr_status = *&status_;
   uint32_t stable_status = curr_status & ~kStatusDirtyFlag;
-  if(curr_status & kStatusDirtyFlag) {
+  if (curr_status & kStatusDirtyFlag) {
     // We have a persistent descriptor that includes all the old and new values
     // needed for recovery, so only persist the new status.
     PersistStatus();
@@ -375,30 +381,30 @@ uint32_t Descriptor::ReadPersistStatus() {
 /// algo will think it's ok (assuming some other thread did it). The
 /// installation for A2, however, will succeeded because it contains
 /// a descriptor. Now A1=1, A2=4, an inconsistent state.
-uint64_t Descriptor::CondCAS(uint32_t word_index, WordDescriptor desc[], uint64_t dirty_flag) {
+uint64_t Descriptor::CondCAS(uint32_t word_index, WordDescriptor desc[],
+                             uint64_t dirty_flag) {
   auto* w = &desc[word_index];
   uint64_t cond_descptr = SetFlags((uint64_t)w, kCondCASFlag);
 
 retry:
   uint64_t ret = CompareExchange64(w->address_, cond_descptr, w->old_value_);
-  if(IsCondCASDescriptorPtr(ret)) {
+  if (IsCondCASDescriptorPtr(ret)) {
     // Already a CondCAS descriptor (ie a WordDescriptor pointer)
 #if PMWCAS_THREAD_HELP == 1
     WordDescriptor* wd = (WordDescriptor*)CleanPtr(ret);
     RAW_CHECK(wd->address_ == w->address_, "wrong address");
     uint64_t dptr = SetFlags(wd->GetDescriptor(), kMwCASFlag | dirty_flag);
     uint64_t desired =
-      *wd->status_address_ == kStatusUndecided ? dptr : wd->old_value_;
+        *wd->status_address_ == kStatusUndecided ? dptr : wd->old_value_;
 
-    if(*(volatile uint64_t*)wd->address_ != ret) {
+    if (*(volatile uint64_t*)wd->address_ != ret) {
       goto retry;
     }
     auto rval = CompareExchange64(
-      wd->address_,
-      *wd->status_address_ == kStatusUndecided ? dptr : wd->old_value_,
-      ret);
-    if(rval == ret) {
-      if(desired == dptr) {
+        wd->address_,
+        *wd->status_address_ == kStatusUndecided ? dptr : wd->old_value_, ret);
+    if (rval == ret) {
+      if (desired == dptr) {
         // Another competing operation succeeded, return
         return dptr;
       }
@@ -406,9 +412,10 @@ retry:
 #endif
     // Retry this operation
     goto retry;
-  } else if(ret == w->old_value_) {
+  } else if (ret == w->old_value_) {
     uint64_t mwcas_descptr = SetFlags(this, kMwCASFlag | dirty_flag);
-    CompareExchange64(w->address_,
+    CompareExchange64(
+        w->address_,
         status_ == kStatusUndecided ? mwcas_descptr : w->old_value_,
         cond_descptr);
   }
@@ -418,16 +425,17 @@ retry:
 }
 
 #ifdef RTM
-bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[], uint64_t dirty_flag) {
+bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
+                                       uint64_t dirty_flag) {
   uint64_t mwcas_descptr = SetFlags(this, kMwCASFlag | dirty_flag);
   uint64_t tries = 0;
   static const uint64_t kMaxTries = 5;
 
 retry:
-  if(_XBEGIN_STARTED == _xbegin()) {
-    for(uint32_t i = 0; i < count_; ++i) {
+  if (_XBEGIN_STARTED == _xbegin()) {
+    for (uint32_t i = 0; i < count_; ++i) {
       WordDescriptor* wd = &all_desc[i];
-      if(*wd->address_ != wd->old_value_) {
+      if (*wd->address_ != wd->old_value_) {
         _xabort(0);
       }
       *wd->address_ = mwcas_descptr;
@@ -435,7 +443,7 @@ retry:
     _xend();
     return true;
   }
-  if(tries++ < kMaxTries) {
+  if (tries++ < kMaxTries) {
     goto retry;
   }
   return false;
@@ -515,16 +523,16 @@ bool Descriptor::VolatileMwCAS(uint32_t calldepth) {
   CompareExchange32(&status_, my_status, kStatusUndecided);
 
   bool succeeded = (status_ == kStatusSucceeded);
-  for(int i = 0; i < count_; i++) {
+  for (int i = 0; i < count_; i++) {
     WordDescriptor* wd = &words_[i];
-    if((uint64_t)wd->address_ == Descriptor::kAllocNullAddress){
+    if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
       continue;
     }
-    CompareExchange64(wd->address_,
-        succeeded ? wd->new_value_ : wd->old_value_, descptr);
+    CompareExchange64(wd->address_, succeeded ? wd->new_value_ : wd->old_value_,
+                      descptr);
   }
 
-  if(calldepth == 0) {
+  if (calldepth == 0) {
     return Cleanup();
   } else {
     return succeeded;
@@ -538,13 +546,14 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
   thread_local WordDescriptor tls_desc[DESC_CAP];
 
   // Not visible to anyone else, persist before making the descriptor visible
-  if(calldepth == 0) {
+  if (calldepth == 0) {
     // Sort all words in address order to avoid livelock.
     // Note that after this, the indexes returned by AddEntry* are not valid any
     // more and the application shouldn't rely on them once MwCAS is issued.
-    std::sort(words_, words_ + count_, [this](WordDescriptor &a, WordDescriptor &b)->bool{
-      return a.address_ < b.address_;
-    });
+    std::sort(words_, words_ + count_,
+              [this](WordDescriptor& a, WordDescriptor& b) -> bool {
+                return a.address_ < b.address_;
+              });
     memcpy(tls_desc, words_, sizeof(WordDescriptor) * DESC_CAP);
     RAW_CHECK(status_ == kStatusUndecided, "invalid status");
     NVRAM::Flush(sizeof(Descriptor), this);
@@ -553,13 +562,13 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
   }
 
   auto status = status_;
-  if(status & kStatusDirtyFlag) {
+  if (status & kStatusDirtyFlag) {
     PersistStatus();
     CompareExchange32(&status_, status & ~kStatusDirtyFlag, status);
     status &= ~kStatusDirtyFlag;
   }
-  if(status != kStatusUndecided) {
-    if(calldepth > 0) {
+  if (status != kStatusUndecided) {
+    if (calldepth > 0) {
       // Operation has already concluded, return.
       MwCASMetrics::AddBailedHelp();
       return status == kStatusSucceeded;
@@ -632,27 +641,28 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
   // Now the MwCAS is concluded - status is either succeeded or failed, and
   // no observers will try to help finish it, so do a blind flush and reset
   // the dirty bit.
-  RAW_CHECK((status_ & ~kStatusDirtyFlag) != kStatusUndecided, "invalid status");
+  RAW_CHECK((status_ & ~kStatusDirtyFlag) != kStatusUndecided,
+            "invalid status");
   PersistStatus();
   status_ &= ~kStatusDirtyFlag;
   // No need to flush again, recovery does not care about the dirty bit
 
   bool succeeded = (status_ == kStatusSucceeded);
-  for(uint32_t i = 0; i < count_; i += 1) {
+  for (uint32_t i = 0; i < count_; i += 1) {
     WordDescriptor* wd = &tls_desc[i];
-    if((uint64_t)wd->address_ == Descriptor::kAllocNullAddress){
+    if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
       continue;
     }
     uint64_t val = succeeded ? wd->new_value_ : wd->old_value_;
     uint64_t clean_descptr = descptr & ~kDirtyFlag;
-    if(clean_descptr == CompareExchange64(wd->address_, val, descptr)) {
+    if (clean_descptr == CompareExchange64(wd->address_, val, descptr)) {
       // Retry if someone else already cleared the dirty bit
       CompareExchange64(wd->address_, val, clean_descptr);
     }
     wd->PersistAddress();
   }
 
-  if(calldepth == 0) {
+  if (calldepth == 0) {
     return Cleanup();
   } else {
     return succeeded;
@@ -666,11 +676,11 @@ bool Descriptor::Cleanup() {
   // We are sure here Status doesn't have dirty flag set
   RAW_CHECK((status_ & kStatusDirtyFlag) == 0, "invalid status");
   RAW_CHECK(status_ == kStatusFailed || status_ == kStatusSucceeded,
-      "invalid status");
+            "invalid status");
 
   bool success = (status_ == kStatusSucceeded);
 
-  if(success) {
+  if (success) {
     MwCASMetrics::AddSucceededUpdate();
   } else {
     MwCASMetrics::AddFailedUpdate();
@@ -689,8 +699,8 @@ bool Descriptor::Cleanup() {
   // let the user determine when to do it (e.g., exit/re-enter every X mwcas
   // operations). Inside any mwcas-related operation we assume it's already
   // protected.
-  auto s = owner_partition_->garbage_list->Push(this,
-      Descriptor::FreeDescriptor, nullptr);
+  auto s = owner_partition_->garbage_list->Push(
+      this, Descriptor::FreeDescriptor, nullptr);
   RAW_CHECK(s.ok(), "garbage list push() failed");
   DCHECK(owner_partition_->garbage_list->GetEpoch()->IsProtected());
   return success;
@@ -699,44 +709,44 @@ bool Descriptor::Cleanup() {
 Status Descriptor::Abort() {
   RAW_CHECK(status_ == kStatusFinished, "cannot abort under current status");
   status_ = kStatusFailed;
-  auto s = owner_partition_->garbage_list->Push(this,
-      Descriptor::FreeDescriptor, nullptr);
+  auto s = owner_partition_->garbage_list->Push(
+      this, Descriptor::FreeDescriptor, nullptr);
   RAW_CHECK(s.ok(), "garbage list push() failed");
   return s;
 }
 
 void Descriptor::DeallocateMemory() {
   // Free the memory associated with the descriptor if needed
-  for(uint32_t i = 0; i < count_; ++i) {
+  for (uint32_t i = 0; i < count_; ++i) {
     auto& word = words_[i];
     auto status = status_;
-    switch(word.recycle_policy_) {
+    switch (word.recycle_policy_) {
       case kRecycleNever:
       case kRecycleOnRecovery:
         break;
       case kRecycleAlways:
-        if(status == kStatusSucceeded) {
-          if(word.old_value_ != kNewValueReserved) {
+        if (status == kStatusSucceeded) {
+          if (word.old_value_ != kNewValueReserved) {
             free_callback_(nullptr, (void*)word.old_value_);
           }
         } else {
           RAW_CHECK(status == kStatusFailed || status == kStatusFinished,
-              "incorrect status found on used/discarded descriptor");
-          if(word.new_value_ != kNewValueReserved) {
+                    "incorrect status found on used/discarded descriptor");
+          if (word.new_value_ != kNewValueReserved) {
             free_callback_(nullptr, (void*)word.new_value_);
           }
         }
         break;
       case kRecycleOldOnSuccess:
-        if(status == kStatusSucceeded) {
-          if(word.old_value_ != kNewValueReserved) {
+        if (status == kStatusSucceeded) {
+          if (word.old_value_ != kNewValueReserved) {
             free_callback_(nullptr, (void*)word.old_value_);
           }
         }
         break;
       case kRecycleNewOnFailure:
-        if(status != kStatusSucceeded) {
-          if(word.new_value_ != kNewValueReserved) {
+        if (status != kStatusSucceeded) {
+          if (word.new_value_ != kNewValueReserved) {
             free_callback_(nullptr, (void*)word.new_value_);
           }
         }
@@ -761,4 +771,4 @@ void Descriptor::FreeDescriptor(void* context, void* desc) {
   desc_to_free->owner_partition_->free_list = desc_to_free;
 }
 
-} // namespace pmwcas
+}  // namespace pmwcas
