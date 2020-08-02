@@ -123,7 +123,7 @@ class alignas(kCacheLineSize) Descriptor {
 
   /// Recycle and installation policy: neither install nor recycle
   /// only used for allocation purpose
-  static const uint32_t kAllocNullAddress = 0x0;
+  static const uint64_t kAllocNullAddress = 0ull;
 
   /// Value signifying an internal reserved value for a new entry
   static const uint64_t kNewValueReserved = ~0ull;
@@ -267,19 +267,11 @@ class alignas(kCacheLineSize) Descriptor {
 #ifndef PMEM
   /// Execute the multi-word compare and swap operation.
   bool VolatileMwCAS(uint32_t calldepth = 0);
-
-  /// Volatile version of the multi-word CAS with failure injection.
-  bool VolatileMwCASWithFailure(uint32_t calldepth = 0,
-                                bool complete_descriptor_install = false);
 #endif
 
 #ifdef PMEM
   /// Execute the multi-word compare and swap operation on persistent memory.
   bool PersistentMwCAS(uint32_t calldepth = 0);
-
-  /// Persistent version of the multi-word CAS with failure injection.
-  bool PersistentMwCASWithFailure(uint32_t calldepth = 0,
-                                  bool complete_descriptor_install = false);
 
   /// Flush only the Status field to persistent memory.
   inline void PersistStatus() { NVRAM::Flush(sizeof(status_), &status_); }
@@ -396,8 +388,7 @@ class DescriptorGuard {
   inline uint32_t ReserveAndAddEntry(
       uint64_t* addr, uint64_t oldval,
       uint32_t recycle_policy = Descriptor::kRecycleNever) {
-    return desc_->AddEntry(addr, oldval, Descriptor::kNewValueReserved,
-                           recycle_policy);
+    return desc_->ReserveAndAddEntry(addr, oldval, recycle_policy);
   }
 
   /// Executes the multi-word compare and swap operation.
@@ -475,19 +466,6 @@ class DescriptorPool {
   void InitDescriptors();
 
  public:
-  /// Metadata that prefixes the actual pool of descriptors for persistence
-  struct Metadata {
-    /// Number of descriptors
-    uint64_t descriptor_count;
-    /// Address of the area got after initializing the area first-time
-    uintptr_t initial_address;
-    /// Pad to cacheline size
-    char padding[kCacheLineSize - sizeof(uint64_t) - sizeof(uintptr_t)];
-    Metadata() : descriptor_count(0), initial_address(0) {}
-  };
-  static_assert(sizeof(Metadata) == kCacheLineSize,
-                "Metadata not of cacheline size");
-
   DescriptorPool(uint32_t pool_size, uint32_t partition_count,
                  bool enable_stats = false);
 
@@ -526,7 +504,6 @@ class MwcTargetField {
  public:
   static const uint64_t kMwCASFlag = Descriptor::kMwCASFlag;
   static const uint64_t kCondCASFlag = Descriptor::kCondCASFlag;
-  static const uint64_t kDescriptorMask = kMwCASFlag | kCondCASFlag;
   static const uint64_t kDirtyFlag = Descriptor::kDirtyFlag;
 
   MwcTargetField(void* desc = nullptr) { value_ = T(desc); }
@@ -598,39 +575,8 @@ class MwcTargetField {
   /// in progress, so help along completing the CAS before returning the value
   /// in the target word.
   inline T GetValueVolatile(EpochManager* epoch) {
-    MwCASMetrics::AddRead();
     EpochGuard guard(epoch, !epoch->IsProtected());
-
-  retry:
-    uint64_t val = (uint64_t)value_;
-
-    if (val & kCondCASFlag) {
-#if PMWCAS_THREAD_HELP == 1
-      Descriptor::WordDescriptor* wd =
-          (Descriptor::WordDescriptor*)Descriptor::CleanPtr(val);
-      uint64_t dptr = Descriptor::SetFlags(wd->GetDescriptor(), kMwCASFlag);
-      RAW_CHECK((char*)this == (char*)wd->address_, "wrong addresses");
-
-      CompareExchange64(wd->address_,
-                        *wd->status_address_ == Descriptor::kStatusUndecided
-                            ? dptr
-                            : wd->old_value_,
-                        val);
-#endif
-      goto retry;
-    }
-
-    if (val & kMwCASFlag) {
-#if PMWCAS_THREAD_HELP == 1
-      // While the address contains a descriptor, help along completing the CAS
-      Descriptor* desc = (Descriptor*)Descriptor::CleanPtr(val);
-      RAW_CHECK(desc, "invalid descriptor pointer");
-      desc->VolatileMwCAS(1);
-#endif
-      goto retry;
-    }
-
-    return val;
+    return GetValueProtectedVolatile();
   }
 
   /// Same as GetValue, but guaranteed to be Protect()'ed already.
@@ -670,48 +616,9 @@ class MwcTargetField {
 
 #ifdef PMEM
   // The persistent variant of GetValue().
-  T GetValuePersistent(EpochManager* epoch) {
-    MwCASMetrics::AddRead();
+  inline T GetValuePersistent(EpochManager* epoch) {
     EpochGuard guard(epoch, !epoch->IsProtected());
-
-  retry:
-    uint64_t val = (uint64_t)value_;
-
-    if (val & kCondCASFlag) {
-#if PMWCAS_THREAD_HELP == 1
-      RAW_CHECK((val & kDirtyFlag) == 0,
-                "dirty flag set on CondCAS descriptor");
-
-      Descriptor::WordDescriptor* wd =
-          (Descriptor::WordDescriptor*)Descriptor::CleanPtr(val);
-      uint64_t dptr =
-          Descriptor::SetFlags(wd->GetDescriptor(), kMwCASFlag | kDirtyFlag);
-      CompareExchange64(wd->address_,
-                        *wd->status_address_ == Descriptor::kStatusUndecided
-                            ? dptr
-                            : wd->old_value_,
-                        val);
-#endif
-      goto retry;
-    }
-
-    if (val & kDirtyFlag) {
-      goto retry;
-    }
-    RAW_CHECK((val & kDirtyFlag) == 0, "dirty flag set on return value");
-
-    if (val & kMwCASFlag) {
-#if PMWCAS_THREAD_HELP == 1
-      // While the address contains a descriptor, help along completing the CAS
-      Descriptor* desc = (Descriptor*)Descriptor::CleanPtr(val);
-      RAW_CHECK(desc, "invalid descriptor pointer");
-      desc->PersistentMwCAS(1);
-#endif
-      goto retry;
-    }
-    RAW_CHECK(IsCleanPtr(val), "dirty flag set on return value");
-
-    return val;
+    return GetValueProtectedPersistent();
   }
 
   // The "protected" variant of GetPersistValue().
