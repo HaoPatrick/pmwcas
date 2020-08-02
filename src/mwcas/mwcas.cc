@@ -429,22 +429,31 @@ bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
                                        uint64_t dirty_flag) {
   uint64_t mwcas_descptr = SetFlags(this, kMwCASFlag | dirty_flag);
   uint64_t tries = 0;
-  static const uint64_t kMaxTries = 5;
+  static const uint64_t kMaxTries = 4;
 
-retry:
-  if (_XBEGIN_STARTED == _xbegin()) {
-    for (uint32_t i = 0; i < count_; ++i) {
-      WordDescriptor* wd = &all_desc[i];
-      if (*wd->address_ != wd->old_value_) {
-        _xabort(0);
+  while (tries < kMaxTries) {
+    auto status = _xbegin();
+    if (status == _XBEGIN_STARTED) {
+      for (uint32_t i = 0; i < count_; ++i) {
+        WordDescriptor* wd = &all_desc[i];
+        // Skip entries added purely for allocating memory
+        if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
+          continue;
+        }
+        if (*wd->address_ != wd->old_value_) {
+          _xabort(0);
+        }
+        *wd->address_ = mwcas_descptr;
       }
-      *wd->address_ = mwcas_descptr;
+      _xend();
+      return true;
     }
-    _xend();
-    return true;
-  }
-  if (tries++ < kMaxTries) {
-    goto retry;
+    if ((status & _XABORT_EXPLICIT)) {
+      // HTM aborted due to address != old_value
+      break;
+    }
+    // else retry
+    tries++;
   }
   return false;
 }
