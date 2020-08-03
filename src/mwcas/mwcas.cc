@@ -188,17 +188,20 @@ void DescriptorPool::Recovery(bool enable_stats) {
         RAW_CHECK((val + adjust_offset) != (uint64_t)&word,
                   "invalid field value");
 
-        /// Our new protocal do not require a flush after the descriptors are
-        /// installed, thus once the status is succeeded, the address can be old
-        /// value or the descriptor
-        if ((val + adjust_offset) == (uint64_t)&desc ||
-            (val + adjust_offset) == (uint64_t)&word ||
-            val == word.old_value_) {
+        /// For a successful PMwCAS, we roll forward a target word if and only
+        /// if it contains a pointer to the MwCAS descriptor.
+        if ((val + adjust_offset) == (uint64_t)&desc) {
           *word.address_ = word.new_value_;
           word.PersistAddress();
           RecoveryMetrics::IncValue(roll_forward_words);
           LOG(INFO) << "Applied new value 0x" << std::hex << word.new_value_
                     << " at 0x" << word.address_;
+        } else if ((val + adjust_offset) == (uint64_t)&word) {
+          *word.address_ = word.old_value_;
+          word.PersistAddress();
+          RecoveryMetrics::IncValue(roll_back_words);
+          LOG(INFO) << "Applied old value 0x" << std::hex << word.old_value_
+                    << " at 0x" << word.address_ << std::endl;
         }
       }
     }
