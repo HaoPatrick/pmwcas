@@ -90,7 +90,7 @@ struct DescriptorPartition;
 class Descriptor;
 class DescriptorPool;
 
-#define PMWCAS_THREAD_HELP 0
+#define PMWCAS_THREAD_HELP 1
 
 class alignas(kCacheLineSize) Descriptor {
   template <typename T>
@@ -251,10 +251,20 @@ class alignas(kCacheLineSize) Descriptor {
   /// operation on an target field depending on the value of the status_ field
   /// in Descriptor. The conditional CAS tries to install a pointer to the MwCAS
   /// descriptor derived from one of words_, expecting the status_ field
-  /// indicates Undecided. [dirty_flag] will be applied on the MwCAS descriptor
-  /// address if specified.
+  /// indicates Undecided.
   inline uint64_t CondCAS(uint32_t word_index, WordDescriptor desc[],
                           uint64_t dirty_flag = 0);
+
+  /// Internal helper function to finish an RDCSS operation.
+  static void CompleteCondCAS(WordDescriptor* wd) {
+#ifdef PMEM
+    return PersistentCompleteCondCAS(wd);
+#else
+    return VolatileCompleteCondCAS(wd);
+#endif
+  }
+#ifndef PMEM
+#endif
 
 #ifdef RTM
   bool RTMInstallDescriptors(WordDescriptor all_desc[],
@@ -265,11 +275,17 @@ class alignas(kCacheLineSize) Descriptor {
   int32_t GetInsertPosition(uint64_t* addr);
 
 #ifndef PMEM
+  /// Complete the RDCSS operation.
+  static void VolatileCompleteCondCAS(WordDescriptor* wd);
+
   /// Execute the multi-word compare and swap operation.
   bool VolatileMwCAS(uint32_t calldepth = 0);
 #endif
 
 #ifdef PMEM
+  /// Complete the RDCSS operation on persistent memory.
+  static void PersistentCompleteCondCAS(WordDescriptor* wd);
+
   /// Execute the multi-word compare and swap operation on persistent memory.
   bool PersistentMwCAS(uint32_t calldepth = 0);
 
@@ -590,13 +606,7 @@ class MwcTargetField {
 #if PMWCAS_THREAD_HELP == 1
       Descriptor::WordDescriptor* wd =
           (Descriptor::WordDescriptor*)Descriptor::CleanPtr(val);
-      uint64_t dptr = Descriptor::SetFlags(wd->GetDescriptor(), kMwCASFlag);
-      RAW_CHECK((char*)this == (char*)wd->address_, "wrong addresses");
-      CompareExchange64(wd->address_,
-                        *wd->status_address_ == Descriptor::kStatusUndecided
-                            ? dptr
-                            : wd->old_value_,
-                        val);
+      Descriptor::VolatileCompleteCondCAS(wd);
 #endif
       goto retry;
     }
@@ -635,18 +645,16 @@ class MwcTargetField {
 
       Descriptor::WordDescriptor* wd =
           (Descriptor::WordDescriptor*)Descriptor::CleanPtr(val);
-      uint64_t dptr =
-          Descriptor::SetFlags(wd->GetDescriptor(), kMwCASFlag | kDirtyFlag);
-      CompareExchange64(wd->address_,
-                        *wd->status_address_ == Descriptor::kStatusUndecided
-                            ? dptr
-                            : wd->old_value_,
-                        val);
+      Descriptor::PersistentCompleteCondCAS(wd);
 #endif
       goto retry;
     }
 
     if (val & kDirtyFlag) {
+#if PMWCAS_THREAD_HELP == 1
+      PersistValue();
+      CompareExchange64((uint64_t*)&value_, val & ~kDirtyFlag, val);
+#endif
       goto retry;
     }
     RAW_CHECK((val & kDirtyFlag) == 0, "dirty flag set on return value");
@@ -660,7 +668,7 @@ class MwcTargetField {
 #endif
       goto retry;
     }
-    RAW_CHECK(IsCleanPtr(val), "dirty flag set on return value");
+    RAW_CHECK(IsCleanPtr(val), "flags set on return value");
 
     return val;
   }
