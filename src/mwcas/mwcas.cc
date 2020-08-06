@@ -8,6 +8,8 @@
 
 namespace pmwcas {
 
+using WordDescriptor = Descriptor::WordDescriptor;
+
 bool MwCASMetrics::enabled = false;
 CoreLocal<MwCASMetrics*> MwCASMetrics::instance;
 uint64_t RecoveryMetrics::stats_[RecoveryStats::MAX_RECOVERY_ITEM] = {0};
