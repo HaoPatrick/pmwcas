@@ -324,8 +324,8 @@ int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
     words_[insertpos].address_ = addr;
     words_[insertpos].old_value_ = oldval;
     words_[insertpos].new_value_ = newval;
-    words_[insertpos].metadata_ =
-        WordDescriptor::PackMetadata(&status_, recycle_policy);
+    words_[insertpos].status_address_ = &status_;
+    words_[insertpos].recycle_policy_ = recycle_policy;
     ++count_;
   }
   return insertpos;
@@ -424,7 +424,7 @@ void Descriptor::VolatileCompleteCondCAS(WordDescriptor* wd) {
   uint64_t ptr = SetFlags(mdesc, kMwCASFlag);
   uint64_t expected = (uint64_t)wd | kCondCASFlag;
   uint64_t desired =
-      *wd->GetStatusAddress() == kStatusUndecided ? ptr : wd->old_value_;
+      *wd->status_address_ == kStatusUndecided ? ptr : wd->old_value_;
   uint64_t rval = CompareExchange64(wd->address_, desired, expected);
 }
 #endif
@@ -761,7 +761,7 @@ void Descriptor::DeallocateMemory() {
   for (uint32_t i = 0; i < count_; ++i) {
     auto& word = words_[i];
     auto status = status_;
-    switch (word.GetRecyclePolicy()) {
+    switch (word.recycle_policy_) {
       case kRecycleNever:
       case kRecycleOnRecovery:
         break;

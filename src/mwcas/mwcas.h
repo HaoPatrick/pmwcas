@@ -172,32 +172,19 @@ class alignas(kCacheLineSize) Descriptor {
     /// The new value to be stored at /a Address
     uint64_t new_value_;
 
-    /// 16 MSB: the word descriptor's recycle policy
-    /// 48 LSB: a reference to the parent Descriptor's status
-    uint64_t metadata_;
-
-    static constexpr uint64_t kAddressBits = 48;
-    static constexpr uint64_t kAddressMask = 0xFFFFFFFFFFFFull;
-
     /// The parent Descriptor's status
-    inline uint32_t* GetStatusAddress() {
-      return (uint32_t*)(metadata_ & kAddressMask);
-    }
+    uint32_t* status_address_;
 
     /// Whether to invoke the user-provided memory free callback to free the
     /// memory when recycling this descriptor. This must be per-word - the
     /// application could mix pointer and non-pointer changes in a single mwcas,
     /// e.g., in the bwtree we might use a single mwcas to change both the root
     /// lpid and other memory page pointers along the way.
-    inline uint32_t GetRecyclePolicy() { return metadata_ >> kAddressBits; }
-
-    static uint64_t PackMetadata(uint32_t* status_address, uint64_t policy) {
-      return (policy << kAddressBits) | (uint64_t)status_address;
-    }
+    uint32_t recycle_policy_;
 
     /// Returns the parent descriptor for this particular word
     inline Descriptor* GetDescriptor() {
-      return (Descriptor*)((uint64_t)GetStatusAddress() -
+      return (Descriptor*)((uint64_t)status_address_ -
                            offsetof(Descriptor, status_));
     }
 
@@ -208,7 +195,6 @@ class alignas(kCacheLineSize) Descriptor {
     }
 #endif
   };
-  static_assert(sizeof(WordDescriptor) == 32);
 
   /// Default constructor
   Descriptor() = delete;
