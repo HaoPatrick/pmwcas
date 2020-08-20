@@ -169,10 +169,10 @@ void DescriptorPool::Recovery(bool enable_stats) {
           // descriptor, then the final value didn't make it to the field
           // (status is Undecided). In both cases we should roll back to old
           // value.
-          *word.address_ = word.old_value_;
+          *word.address_ = word.GetOldValue();
           word.PersistAddress();
           RecoveryMetrics::IncValue(roll_back_words);
-          LOG(INFO) << "Applied old value 0x" << std::hex << word.old_value_
+          LOG(INFO) << "Applied old value 0x" << std::hex << word.GetOldValue()
                     << " at 0x" << word.address_ << std::endl;
         }
       }
@@ -193,16 +193,16 @@ void DescriptorPool::Recovery(bool enable_stats) {
         /// For a successful PMwCAS, we roll forward a target word if and only
         /// if it contains a pointer to the MwCAS descriptor.
         if ((val + adjust_offset) == (uint64_t)&desc) {
-          *word.address_ = word.new_value_;
+          *word.address_ = word.GetNewValue();
           word.PersistAddress();
           RecoveryMetrics::IncValue(roll_forward_words);
-          LOG(INFO) << "Applied new value 0x" << std::hex << word.new_value_
+          LOG(INFO) << "Applied new value 0x" << std::hex << word.GetNewValue()
                     << " at 0x" << word.address_;
         } else if ((val + adjust_offset) == (uint64_t)&word) {
-          *word.address_ = word.old_value_;
+          *word.address_ = word.GetOldValue();
           word.PersistAddress();
           RecoveryMetrics::IncValue(roll_back_words);
-          LOG(INFO) << "Applied old value 0x" << std::hex << word.old_value_
+          LOG(INFO) << "Applied old value 0x" << std::hex << word.GetOldValue()
                     << " at 0x" << word.address_ << std::endl;
         }
       }
@@ -319,13 +319,25 @@ int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
   DCHECK(owner_partition_->garbage_list->GetEpoch()->IsProtected());
   DCHECK(IsCleanPtr(oldval));
   DCHECK(IsCleanPtr(newval) || newval == kNewValueReserved);
+#if PMWCAS_SAFE_MEMORY == 1
+  if (recycle_policy == kRecycleNever ||
+      recycle_policy == kRecycleNewOnFailure) {
+    oldval = WordDescriptor::SetNoRecycleFlag(oldval);
+  }
+  if (recycle_policy == kRecycleNever ||
+      recycle_policy == kRecycleOldOnSuccess) {
+    newval = WordDescriptor::SetNoRecycleFlag(newval);
+  }
+#else
+  RAW_CHECK(recycle_policy == kRecycleNever,
+            "Safe memory ownership transfer is disabled");
+#endif
   int insertpos = GetInsertPosition(addr);
   if (insertpos >= 0) {
     words_[insertpos].address_ = addr;
     words_[insertpos].old_value_ = oldval;
     words_[insertpos].new_value_ = newval;
     words_[insertpos].status_address_ = &status_;
-    words_[insertpos].recycle_policy_ = recycle_policy;
     ++count_;
   }
   return insertpos;
@@ -392,7 +404,8 @@ uint64_t Descriptor::CondCAS(uint32_t word_index, WordDescriptor desc[],
   uint64_t cond_descptr = SetFlags((uint64_t)w, kCondCASFlag);
 
 retry:
-  uint64_t ret = CompareExchange64(w->address_, cond_descptr, w->old_value_);
+  uint64_t old_value = w->GetOldValue();
+  uint64_t ret = CompareExchange64(w->address_, cond_descptr, old_value);
 #ifdef PMEM
   if (ret & dirty_flag) {
 #if PMWCAS_THREAD_HELP == 1
@@ -414,7 +427,7 @@ retry:
 #endif
     // Retry this operation
     goto retry;
-  } else if (ret == w->old_value_) {
+  } else if (ret == old_value) {
     CompleteCondCAS(w);
   }
 
@@ -428,7 +441,7 @@ void Descriptor::VolatileCompleteCondCAS(WordDescriptor* wd) {
   uint64_t ptr = SetFlags(mdesc, kMwCASFlag);
   uint64_t expected = (uint64_t)wd | kCondCASFlag;
   uint64_t desired =
-      *wd->status_address_ == kStatusUndecided ? ptr : wd->old_value_;
+      *wd->status_address_ == kStatusUndecided ? ptr : wd->GetOldValue();
   uint64_t rval = CompareExchange64(wd->address_, desired, expected);
 }
 #endif
@@ -440,7 +453,7 @@ void Descriptor::PersistentCompleteCondCAS(WordDescriptor* wd) {
   uint64_t ptr = SetFlags(mdesc, kMwCASFlag);
   uint64_t expected = SetFlags((uint64_t)wd, kCondCASFlag);
   uint64_t desired =
-      mdesc->ReadPersistStatus() == kStatusUndecided ? ptr : wd->old_value_;
+      mdesc->ReadPersistStatus() == kStatusUndecided ? ptr : wd->GetOldValue();
   desired = SetFlags(desired, kDirtyFlag);
   uint64_t rval = CompareExchange64(wd->address_, desired, expected);
   if (rval == expected || rval == desired) {
@@ -466,7 +479,7 @@ bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
         if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
           continue;
         }
-        if (*wd->address_ != wd->old_value_) {
+        if (*wd->address_ != wd->GetOldValue()) {
           _xabort(0);
         }
         *wd->address_ = mwcas_descptr;
@@ -548,7 +561,7 @@ bool Descriptor::VolatileMwCAS(uint32_t calldepth) {
 
       // Ok if a) we succeeded to swap in a pointer to this descriptor or b)
       // some other thread has already done so.
-      if (rval == wd->old_value_ || CleanPtr(rval) == (uint64_t)this) {
+      if (rval == wd->GetOldValue() || CleanPtr(rval) == (uint64_t)this) {
         continue;
       }
 
@@ -579,7 +592,8 @@ phase_2:
     if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
       continue;
     }
-    CompareExchange64(wd->address_, succeeded ? wd->new_value_ : wd->old_value_,
+    CompareExchange64(wd->address_,
+                      succeeded ? wd->GetNewValue() : wd->GetOldValue(),
                       descptr);
   }
 
@@ -658,7 +672,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
       // (which point to descriptors) before switching to final status, so
       // that recovery will know reliably whether to roll forward or back for
       // this descriptor.
-      if (rval == wd->old_value_ || CleanPtr(rval) == (uint64_t)this) {
+      if (rval == wd->GetOldValue() || CleanPtr(rval) == (uint64_t)this) {
         continue;
       }
 
@@ -698,7 +712,7 @@ phase_2:
     if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
       continue;
     }
-    uint64_t val = succeeded ? wd->new_value_ : wd->old_value_;
+    uint64_t val = succeeded ? wd->GetNewValue() : wd->GetOldValue();
     val = SetFlags(val, kDirtyFlag);
 
     uint64_t rval = CompareExchange64(wd->address_, val, descptr);
@@ -761,11 +775,23 @@ Status Descriptor::Abort() {
   return s;
 }
 
+#if PMWCAS_SAFE_MEMORY == 1
 void Descriptor::DeallocateMemory() {
   // Free the memory associated with the descriptor if needed
   for (uint32_t i = 0; i < count_; ++i) {
     auto& word = words_[i];
     auto status = status_;
+    if (status == kStatusSucceeded) {
+      if (word.ShouldRecycleOldValue()) {
+        free_callback_(nullptr, (void*)word.GetOldValue());
+      }
+    } else if (status == kStatusFailed) {
+      if (word.ShouldRecycleNewValue()) {
+        free_callback_(nullptr, (void*)word.GetNewValue());
+      }
+    }
+#if 0
+    // TODO(shiges): revise the assertions
     switch (word.recycle_policy_) {
       case kRecycleNever:
       case kRecycleOnRecovery:
@@ -800,15 +826,20 @@ void Descriptor::DeallocateMemory() {
       default:
         LOG(FATAL) << "invalid recycle policy";
     }
+#endif
   }
   count_ = 0;
 }
+#endif
 
 void Descriptor::FreeDescriptor(void* context, void* desc) {
   MARK_UNREFERENCED(context);
 
   Descriptor* desc_to_free = reinterpret_cast<Descriptor*>(desc);
+
+#if PMWCAS_SAFE_MEMORY == 1
   desc_to_free->DeallocateMemory();
+#endif
   desc_to_free->Initialize();
 
   RAW_CHECK(desc_to_free->status_ == kStatusFinished, "invalid status");

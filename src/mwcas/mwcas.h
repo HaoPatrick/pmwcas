@@ -91,6 +91,7 @@ class Descriptor;
 class DescriptorPool;
 
 #define PMWCAS_THREAD_HELP 1
+#define PMWCAS_SAFE_MEMORY 1
 
 class alignas(kCacheLineSize) Descriptor {
   template <typename T>
@@ -126,7 +127,7 @@ class alignas(kCacheLineSize) Descriptor {
   static const uint64_t kAllocNullAddress = 0ull;
 
   /// Value signifying an internal reserved value for a new entry
-  static const uint64_t kNewValueReserved = ~0ull;
+  static const uint64_t kNewValueReserved = 0ull;
 
   /// Returns whether the value given is an MwCAS descriptor or not.
   inline static bool IsMwCASDescriptorPtr(uint64_t value) {
@@ -163,6 +164,8 @@ class alignas(kCacheLineSize) Descriptor {
   /// Descriptor's status_ field which determines whether a CAS that wishes to
   /// make address_ point to WordDescriptor can happen.
   struct WordDescriptor {
+    static const uint64_t kNoRecycleFlag = (uint64_t)1 << 63;
+
     /// The target address
     uint64_t* address_;
 
@@ -175,18 +178,43 @@ class alignas(kCacheLineSize) Descriptor {
     /// The parent Descriptor's status
     uint32_t* status_address_;
 
-    /// Whether to invoke the user-provided memory free callback to free the
-    /// memory when recycling this descriptor. This must be per-word - the
-    /// application could mix pointer and non-pointer changes in a single mwcas,
-    /// e.g., in the bwtree we might use a single mwcas to change both the root
-    /// lpid and other memory page pointers along the way.
-    uint32_t recycle_policy_;
-
     /// Returns the parent descriptor for this particular word
     inline Descriptor* GetDescriptor() {
       return (Descriptor*)((uint64_t)status_address_ -
                            offsetof(Descriptor, status_));
     }
+
+    inline uint64_t GetOldValue() const {
+#if PMWCAS_SAFE_MEMORY == 1
+      return old_value_ & ~kNoRecycleFlag;
+#else
+      DCHECK((old_value_ & kNoRecycleFlag) == 0);
+      return old_value_;
+#endif
+    }
+
+    inline uint64_t GetNewValue() const {
+#if PMWCAS_SAFE_MEMORY == 1
+      return new_value_ & ~kNoRecycleFlag;
+#else
+      DCHECK((new_value_ & kNoRecycleFlag) == 0);
+      return new_value_;
+#endif
+    }
+
+#if PMWCAS_SAFE_MEMORY == 1
+    inline static uint64_t SetNoRecycleFlag(uint64_t value) {
+      return value | kNoRecycleFlag;
+    }
+
+    inline bool ShouldRecycleOldValue() {
+      return !(new_value_ & kNoRecycleFlag);
+    }
+
+    inline bool ShouldRecycleNewValue() {
+      return !(new_value_ & kNoRecycleFlag);
+    }
+#endif
 
 #ifdef PMEM
     /// Persist the data pointed to by address_
@@ -195,6 +223,8 @@ class alignas(kCacheLineSize) Descriptor {
     }
 #endif
   };
+  static_assert(sizeof(WordDescriptor) == 32,
+                "WordDescriptor must occupy half a cacheline");
 
   /// Default constructor
   Descriptor() = delete;
@@ -217,7 +247,7 @@ class alignas(kCacheLineSize) Descriptor {
 
   /// Retrieves the new value for the given word index in the PMwCAS
   inline uint64_t GetNewValue(uint32_t index) {
-    return words_[index].new_value_;
+    return words_[index].GetNewValue();
   }
 
   /// Retrieves the pointer to the new value slot for a given word in the PMwCAS
@@ -317,8 +347,10 @@ class alignas(kCacheLineSize) Descriptor {
   /// Cleanup steps of MWCAS common to both persistent and volatile versions.
   bool Cleanup();
 
+#if PMWCAS_SAFE_MEMORY == 1
   /// Deallocate the memory associated with the MwCAS if needed.
   void DeallocateMemory();
+#endif
 
   /// Places a descriptor back on the descriptor free pool (partitioned). This
   /// can be used as the callback function for the epoch manager/garbage list to
