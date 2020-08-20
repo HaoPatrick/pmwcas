@@ -393,6 +393,7 @@ uint64_t Descriptor::CondCAS(uint32_t word_index, WordDescriptor desc[],
 
 retry:
   uint64_t ret = CompareExchange64(w->address_, cond_descptr, w->old_value_);
+#ifdef PMEM
   if (ret & dirty_flag) {
 #if PMWCAS_THREAD_HELP == 1
     w->PersistAddress();
@@ -401,6 +402,9 @@ retry:
     // TODO(shiges): improve this busy-waiting with less CAS operations
     goto retry;
   }
+#else
+  RAW_CHECK((ret & kDirtyFlag) == 0, "dirty flag set on return value");
+#endif
   if (IsCondCASDescriptorPtr(ret)) {
     // Already a CondCAS descriptor (ie a WordDescriptor pointer)
 #if PMWCAS_THREAD_HELP == 1
@@ -501,6 +505,10 @@ bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
 bool Descriptor::VolatileMwCAS(uint32_t calldepth) {
   DCHECK(owner_partition_->garbage_list->GetEpoch()->IsProtected());
 
+#if not(PMWCAS_THREAD_HELP == 1)
+  RAW_CHECK(calldepth == 0, "recursive helping is not enabled");
+#endif
+
   if (calldepth == 0) {
     std::sort(words_, words_ + count_,
               [this](WordDescriptor& a, WordDescriptor& b) -> bool {
@@ -508,34 +516,29 @@ bool Descriptor::VolatileMwCAS(uint32_t calldepth) {
               });
   }
 
+  uint32_t my_status = kStatusSucceeded;
+  bool rtm_install_success = false;
+
   if (status_ != kStatusUndecided) {
-    if (calldepth > 0) {
-      // Short circuit and return if the operation has already concluded.
-      MwCASMetrics::AddBailedHelp();
-      return status_ == kStatusSucceeded;
-    } else {
-      return Cleanup();
-    }
+    // Skip phase 1 if already concluded
+    goto phase_2;
   }
 
-  uint64_t descptr = SetFlags(this, kMwCASFlag);
-  uint32_t my_status = kStatusSucceeded;
-
+#if 0
   // Go to phase 2 directly if helping along.
+  // FIXME(shiges): why?
   if (calldepth > 0) {
     my_status = kStatusFailed;
   }
-
-  if (my_status == kStatusSucceeded) {
-    // Try to swap a pointer to this descriptor into all target addresses
-    // using CondCAS Try RTM install first, if failed go to fallback solution.
-#ifdef RTM
-    auto rtm_install_success = RTMInstallDescriptors(words_);
-#else
-    auto rtm_install_success = false;
 #endif
 
-    for (uint32_t i = 0; i < count_ && !rtm_install_success; i++) {
+#ifdef RTM
+  // Try RTM install first, if failed go to fallback solution.
+  rtm_install_success = RTMInstallDescriptors(words_);
+#endif
+
+  if (!rtm_install_success) {
+    for (uint32_t i = 0; i < count_ && my_status == kStatusSucceeded; ++i) {
       WordDescriptor* wd = &words_[i];
       if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
         continue;
@@ -568,8 +571,10 @@ bool Descriptor::VolatileMwCAS(uint32_t calldepth) {
 
   CompareExchange32(&status_, my_status, kStatusUndecided);
 
+phase_2:
   bool succeeded = (status_ == kStatusSucceeded);
-  for (int i = 0; i < count_; i++) {
+  uint64_t descptr = SetFlags(this, kMwCASFlag);
+  for (uint32_t i = 0; i < count_; i += 1) {
     WordDescriptor* wd = &words_[i];
     if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
       continue;

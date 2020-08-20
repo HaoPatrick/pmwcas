@@ -620,6 +620,8 @@ class MwcTargetField {
 #endif
       goto retry;
     }
+    RAW_CHECK(IsCleanPtr(val), "flags set on return value");
+
     return val;
   }
 #endif
