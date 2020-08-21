@@ -626,14 +626,9 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
               [this](WordDescriptor& a, WordDescriptor& b) -> bool {
                 return a.address_ < b.address_;
               });
-    // memcpy(tls_desc, words_, sizeof(WordDescriptor) * DESC_CAP);
     RAW_CHECK(status_ == kStatusUndecided, "invalid status");
     NVRAM::Flush(sizeof(Descriptor), this);
-  } else {
-    // memcpy(tls_desc, words_, sizeof(WordDescriptor) * DESC_CAP);
   }
-  // XXX(shiges): hack
-  WordDescriptor* tls_desc = words_;
 
   uint32_t my_status = kStatusSucceeded;
   bool rtm_install_success = false;
@@ -653,7 +648,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
 
 #ifdef RTM
   // Try RTM install first, if failed go to fallback solution.
-  rtm_install_success = RTMInstallDescriptors(tls_desc, kDirtyFlag);
+  rtm_install_success = RTMInstallDescriptors(words_, kDirtyFlag);
 #endif
 
   if (!rtm_install_success) {
@@ -664,7 +659,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
         continue;
       }
     retry_entry:
-      auto rval = CondCAS(i, tls_desc, kDirtyFlag);
+      auto rval = CondCAS(i, words_, kDirtyFlag);
       RAW_CHECK((rval & kDirtyFlag) == 0, "dirty flag set on return value");
 
       // Ok if a) we succeeded to swap in a pointer to this descriptor or b)
@@ -708,7 +703,7 @@ phase_2:
   bool succeeded = (status_ == kStatusSucceeded);
   uint64_t descptr = SetFlags(this, kMwCASFlag);
   for (uint32_t i = 0; i < count_; i += 1) {
-    WordDescriptor* wd = &tls_desc[i];
+    WordDescriptor* wd = &words_[i];
     if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
       continue;
     }
