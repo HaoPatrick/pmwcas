@@ -619,15 +619,17 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
   // Not visible to anyone else, persist before making the descriptor visible
   if (calldepth == 0) {
     // Sort all words in address order to avoid livelock.
-    // Note that after this, the indexes returned by AddEntry* are not valid
-    // any more and the application shouldn't rely on them once MwCAS is
-    // issued.
-    std::sort(words_, words_ + count_,
-              [this](WordDescriptor& a, WordDescriptor& b) -> bool {
-                return a.address_ < b.address_;
-              });
+    for (uint32_t i = 0; i < count_; ++i) {
+      indexes_[i] = i;
+    }
+    std::sort(indexes_, indexes_ + count_, [this](auto a, auto b) -> bool {
+      return words_[a].address_ < words_[b].address_;
+    });
+    for (uint32_t i = 1; i < count_; ++i) {
+      DCHECK(words_[indexes_[i - 1]].address_ < words_[indexes_[i]].address_);
+    }
     RAW_CHECK(status_ == kStatusUndecided, "invalid status");
-    NVRAM::Flush(sizeof(Descriptor), this);
+    NVRAM::Flush(offsetof(Descriptor, indexes_), this);
   }
 
   uint32_t my_status = kStatusSucceeded;
@@ -653,13 +655,13 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
 
   if (!rtm_install_success) {
     for (uint32_t i = 0; i < count_ && my_status == kStatusSucceeded; ++i) {
-      WordDescriptor* wd = &words_[i];
+      WordDescriptor* wd = &words_[indexes_[i]];
       // Skip entries added purely for allocating memory
       if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
         continue;
       }
     retry_entry:
-      auto rval = CondCAS(i, words_, kDirtyFlag);
+      auto rval = CondCAS(indexes_[i], words_, kDirtyFlag);
       RAW_CHECK((rval & kDirtyFlag) == 0, "dirty flag set on return value");
 
       // Ok if a) we succeeded to swap in a pointer to this descriptor or b)
@@ -703,7 +705,7 @@ phase_2:
   bool succeeded = (status_ == kStatusSucceeded);
   uint64_t descptr = SetFlags(this, kMwCASFlag);
   for (uint32_t i = 0; i < count_; i += 1) {
-    WordDescriptor* wd = &words_[i];
+    WordDescriptor* wd = &words_[indexes_[i]];
     if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
       continue;
     }

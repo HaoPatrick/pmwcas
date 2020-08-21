@@ -391,10 +391,13 @@ class alignas(kCacheLineSize) Descriptor {
   /// descriptor. Optional: only for applications that use it.
   FreeCallback free_callback_;
 
-  char padding[32];
-
   /// Array of word descriptors bounded DESC_CAP
-  WordDescriptor words_[DESC_CAP];
+  alignas(kCacheLineSize) WordDescriptor words_[DESC_CAP];
+
+#ifdef PMEM
+  /// Array of (sorted) offsets into words_ to avoid in-place sorting
+  alignas(kCacheLineSize) uint8_t indexes_[DESC_CAP];
+#endif
 };
 
 class DescriptorGuard {
