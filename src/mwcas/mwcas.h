@@ -208,7 +208,7 @@ class alignas(kCacheLineSize) Descriptor {
     }
 
     inline bool ShouldRecycleOldValue() {
-      return !(new_value_ & kNoRecycleFlag);
+      return !(old_value_ & kNoRecycleFlag);
     }
 
     inline bool ShouldRecycleNewValue() {
