@@ -128,13 +128,6 @@ void DescriptorPool::Recovery(bool enable_stats) {
   for (uint32_t i = 0; i < pool_size_; ++i) {
     auto& desc = descriptors_[i];
 
-    if (desc.status_ == Descriptor::kStatusInvalid) {
-      // Must be a new pool - comes with everything zeroed but better
-      // find this as we look at the first descriptor.
-      RecoveryMetrics::IncValue(invalid_desc);
-      continue;
-    }
-
     desc.assert_valid_status();
 
     // Shift the old address to adapt to the new pool
@@ -254,6 +247,12 @@ void DescriptorPool::InitDescriptors() {
       p->free_list = desc;
     }
   }
+
+#ifdef PMEM
+  // Flush the entire pool at (re-)start. Then it would be ready to
+  // conduct PMwCAS operations.
+  NVRAM::Flush(sizeof(Descriptor) * pool_size_, descriptors_);
+#endif
 }
 
 DescriptorPool::~DescriptorPool() { MwCASMetrics::Uninitialize(); }
@@ -292,20 +291,60 @@ DescriptorGuard DescriptorPool::AllocateDescriptor(
   RAW_CHECK(desc, "null descriptor pointer");
   desc->free_callback_ = fc ? fc : Descriptor::DefaultFreeCallback;
 
+  desc->Initialize();
+
   return DescriptorGuard(desc);
 }
 
-Descriptor::Descriptor(DescriptorPartition* partition)
-    : owner_partition_(partition) {
-  Initialize();
+Descriptor::Descriptor(DescriptorPartition* partition) {
+  count_ = 0;
+  next_ptr_ = nullptr;
+  owner_partition_ = partition;
+  for (uint32_t i = 0; i < DESC_CAP; ++i) {
+    DCHECK(words_[i].address_ == 0x0);
+    DCHECK(words_[i].old_value_ == 0x0);
+    DCHECK(words_[i].new_value_ == 0x0);
+    words_[i].status_address_ = &status_;
+  }
+  status_ = kStatusFinished;
 }
 
 void Descriptor::Initialize() {
-  status_ = kStatusFinished;
+  RAW_CHECK(status_ == kStatusFinished, "invalid status");
+#if defined(PMEM) && not(defined(NDEBUG))
+  // For PMwCAS we want to always start with a clean slate
+  for (uint32_t i = 0; i < DESC_CAP; ++i) {
+    DCHECK(words_[i].address_ == 0x0);
+    DCHECK(words_[i].old_value_ == 0x0);
+    DCHECK(words_[i].new_value_ == 0x0);
+  }
+#endif
+
   count_ = 0;
   next_ptr_ = nullptr;
-#ifndef NDEBUG
-  memset(words_, 0, sizeof(WordDescriptor) * DESC_CAP);
+
+  status_ = kStatusUndecided;
+#ifdef PMEM
+  // Persisting the Undecided status before adding entries allows
+  // the recovery to undo the changes if a crash happens during
+  // preparing entries.
+  PersistStatus();
+#endif
+}
+
+void Descriptor::Finalize() {
+  RAW_CHECK(status_ == kStatusSucceeded || status_ == kStatusFailed,
+            "invalid status");
+
+  // TODO(shiges): discuss persist or not
+  status_ = kStatusFinished;
+#ifdef PMEM
+  for (uint32_t i = 0; i < count_; ++i) {
+    words_[i].address_ = 0x0;
+    words_[i].old_value_ = 0x0;
+    words_[i].new_value_ = 0x0;
+  }
+  NVRAM::Flush(sizeof(WordDescriptor) * count_, &words_);
 #endif
 }
 
@@ -319,6 +358,7 @@ int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
   DCHECK(owner_partition_->garbage_list->GetEpoch()->IsProtected());
   DCHECK(IsCleanPtr(oldval));
   DCHECK(IsCleanPtr(newval) || newval == kNewValueReserved);
+  RAW_CHECK(status_ == kStatusUndecided, "invalid status");
 #if PMWCAS_SAFE_MEMORY == 1
   if (recycle_policy == kRecycleNever ||
       recycle_policy == kRecycleNewOnFailure) {
@@ -337,7 +377,6 @@ int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
     words_[insertpos].address_ = addr;
     words_[insertpos].old_value_ = oldval;
     words_[insertpos].new_value_ = newval;
-    words_[insertpos].status_address_ = &status_;
     ++count_;
   }
   return insertpos;
@@ -518,6 +557,8 @@ bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
 bool Descriptor::VolatileMwCAS(uint32_t calldepth) {
   DCHECK(owner_partition_->garbage_list->GetEpoch()->IsProtected());
 
+  RAW_CHECK(status_ != kStatusFinished, "invalid status");
+
 #if not(PMWCAS_THREAD_HELP == 1)
   RAW_CHECK(calldepth == 0, "recursive helping is not enabled");
 #endif
@@ -612,6 +653,8 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
   // be nested/recursively used. Replace this with a stack.
   // thread_local WordDescriptor tls_desc[DESC_CAP];
 
+  RAW_CHECK(status_ != kStatusFinished, "invalid status");
+
 #if not(PMWCAS_THREAD_HELP == 1)
   RAW_CHECK(calldepth == 0, "recursive helping is not enabled");
 #endif
@@ -629,7 +672,9 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
       DCHECK(words_[indexes_[i - 1]].address_ < words_[indexes_[i]].address_);
     }
     RAW_CHECK(status_ == kStatusUndecided, "invalid status");
-    NVRAM::Flush(offsetof(Descriptor, indexes_), this);
+
+    // TODO(shiges): just flush the first count_ WordDescriptors?
+    NVRAM::Flush(sizeof(words_), &words_);
   }
 
   uint32_t my_status = kStatusSucceeded;
@@ -764,7 +809,7 @@ bool Descriptor::Cleanup() {
 }
 
 Status Descriptor::Abort() {
-  RAW_CHECK(status_ == kStatusFinished, "cannot abort under current status");
+  RAW_CHECK(status_ == kStatusUndecided, "cannot abort under current status");
   status_ = kStatusFailed;
   auto s = owner_partition_->garbage_list->Push(
       this, Descriptor::FreeDescriptor, nullptr);
@@ -825,7 +870,6 @@ void Descriptor::DeallocateMemory() {
     }
 #endif
   }
-  count_ = 0;
 }
 #endif
 
@@ -837,7 +881,7 @@ void Descriptor::FreeDescriptor(void* context, void* desc) {
 #if PMWCAS_SAFE_MEMORY == 1
   desc_to_free->DeallocateMemory();
 #endif
-  desc_to_free->Initialize();
+  desc_to_free->Finalize();
 
   RAW_CHECK(desc_to_free->status_ == kStatusFinished, "invalid status");
 

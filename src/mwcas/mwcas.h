@@ -228,16 +228,22 @@ class alignas(kCacheLineSize) Descriptor {
 
   /// Default constructor
   Descriptor() = delete;
+
+  /// Function for initializing a Descriptor.
+  /// Called only during system initialization/recovery.
   Descriptor(DescriptorPartition* partition);
 
-  /// Function for initializing a newly allocated Descriptor.
+  /// Function for reinitializing a finalized Descriptor.
+  /// Called only on newly allocated Descriptors at runtime.
   void Initialize();
+
+  /// Function for finalizing a concluded Descriptor.
+  void Finalize();
 
   /// Executes the multi-word compare and swap operation.
   bool MwCAS() {
-    RAW_CHECK(status_ == kStatusFinished,
-              "status of descriptor is not kStatusFinished");
-    status_ = kStatusUndecided;
+    RAW_CHECK(status_ == kStatusUndecided,
+              "status of descriptor is not kStatusUndecided");
 #ifdef PMEM
     return PersistentMwCAS(0);
 #else
@@ -364,11 +370,10 @@ class alignas(kCacheLineSize) Descriptor {
   /// Descriptor states. Valid transitions are as follows:
   /// kStatusUndecided->kStatusSucceeded->kStatusFinished->kStatusUndecided
   ///               \-->kStatusFailed-->kStatusFinished->kStatusUndecided
-  static const uint32_t kStatusInvalid = 0U;
-  static const uint32_t kStatusFinished = 1U;
-  static const uint32_t kStatusSucceeded = 2U;
-  static const uint32_t kStatusFailed = 3U;
-  static const uint32_t kStatusUndecided = 4U;
+  static const uint32_t kStatusFinished = 0U;
+  static const uint32_t kStatusSucceeded = 1U;
+  static const uint32_t kStatusFailed = 2U;
+  static const uint32_t kStatusUndecided = 3U;
 
   inline void assert_valid_status() {
     auto s = status_ & ~kStatusDirtyFlag;
@@ -455,9 +460,6 @@ class DescriptorGuard {
     finished_ = true;
     return desc_->Abort();
   }
-
-  /// Function for initializing a newly allocated Descriptor.
-  void Initialize() { desc_->Initialize(); }
 
  private:
   /// The descriptor behind it

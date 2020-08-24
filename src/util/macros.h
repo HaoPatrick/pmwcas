@@ -23,6 +23,8 @@ namespace pmwcas {
 #define PREFETCH_KEY_DATA(key) _mm_prefetch(key.data(), _MM_HINT_T0)
 #define PREFETCH_NEXT_PAGE(delta) _mm_prefetch((char*)(delta->next_page), _MM_HINT_T0)
 
+#define COMPILER_MEMORY_FENCE asm volatile("" ::: "memory")
+
 // Returns true if \a x is a power of two.
 #define IS_POWER_OF_TWO(x) (x && (x & (x - 1)) == 0)
 
