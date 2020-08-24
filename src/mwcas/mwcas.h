@@ -264,7 +264,10 @@ class alignas(kCacheLineSize) Descriptor {
   /// Reserve a slot in the words array, but don't know what the new value is
   /// yet. The application should use GetNewValue[Ptr] to fill in later.
   inline uint32_t ReserveAndAddEntry(uint64_t* addr, uint64_t oldval,
-                                     uint32_t recycle_policy = kRecycleNever) {
+                                     uint32_t recycle_policy) {
+    RAW_CHECK(recycle_policy == kRecycleAlways ||
+                  recycle_policy == kRecycleNewOnFailure,
+              "wrong policy specified for ReserveAndAddEntry()");
     return AddEntry(addr, oldval, kNewValueReserved, recycle_policy);
   }
 
@@ -436,9 +439,8 @@ class DescriptorGuard {
 
   /// Reserve a slot in the words array, but don't know what the new value is
   /// yet. The application should use GetNewValue[Ptr] to fill in later.
-  inline uint32_t ReserveAndAddEntry(
-      uint64_t* addr, uint64_t oldval,
-      uint32_t recycle_policy = Descriptor::kRecycleNever) {
+  inline uint32_t ReserveAndAddEntry(uint64_t* addr, uint64_t oldval,
+                                     uint32_t recycle_policy) {
     return desc_->ReserveAndAddEntry(addr, oldval, recycle_policy);
   }
 
