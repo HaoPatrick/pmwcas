@@ -23,6 +23,15 @@ class IAllocator {
   virtual void FreeAligned(void* bytes) = 0;
   virtual uint64_t GetAllocatedSize(void* bytes) = 0;
   virtual Status Validate(void* bytes) = 0;
+
+ protected:
+  static void* SetRecycleFlag(void* ptr) {
+    return (void*)((uint64_t)ptr | (1ull << 63));
+  }
+
+  static void* UnsetRecycleFlag(void* ptr) {
+    return (void*)((uint64_t)ptr & ~(1ull << 63));
+  }
 };
 
 } // namespace pmwcas

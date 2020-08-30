@@ -237,7 +237,7 @@ class TlsAllocator : public IAllocator {
   void Allocate(void **mem, size_t nSize, bool recycle = true) override {
     *mem= TlsAllocate(nSize);
     if (recycle) {
-      *mem = (void *)((uint64_t)(*mem) | (1ull << 63));
+      *mem = SetRecycleFlag(*mem);
     }
     DCHECK(*mem);
   }
@@ -317,7 +317,7 @@ class DefaultAllocator : IAllocator {
   void Allocate(void **mem, size_t nSize, bool recycle = true) override {
     int n = posix_memalign(mem, kCacheLineSize, nSize);
     if (recycle) {
-      *mem = (void *)((uint64_t)(*mem) | (1ull << 63));
+      *mem = SetRecycleFlag(*mem);
     }
     RAW_CHECK(n == 0, "allocator error.");
   }
@@ -418,9 +418,11 @@ class PMDKAllocator : IAllocator {
   void Allocate(void** mem, size_t nSize, bool recycle = true) override {
     TX_BEGIN(pop) {
       pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
-      uint64_t flag = recycle ? (1ull << 63) : 0;
-      uint64_t ptr = (uint64_t) pmemobj_direct(pmemobj_tx_alloc(nSize, TOID_TYPE_NUM(char)));
-      *mem = (void *)(ptr | flag);
+      void* ptr = pmemobj_direct(pmemobj_tx_alloc(nSize, TOID_TYPE_NUM(char)));
+      if (recycle) {
+        ptr = SetRecycleFlag(ptr);
+      }
+      *mem = ptr;
     }
     TX_ONABORT {
       std::cout
