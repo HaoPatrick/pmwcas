@@ -244,7 +244,7 @@ class TlsAllocator : public IAllocator {
   }
 
   void Free(void **mem) override {
-    void* pBytes = *mem;
+    void* pBytes = UnsetRecycleFlag(*mem);
     auto& tls_map = GetTlsMap();
     // Extract the hidden size info
     Header* pHeader = ExtractHeader(pBytes);
@@ -324,7 +324,7 @@ class DefaultAllocator : IAllocator {
   }
 
   void Free(void **mem) override {
-    free(*mem);
+    free(UnsetRecycleFlag(*mem));
     *mem = nullptr;
   }
 
@@ -459,7 +459,7 @@ class PMDKAllocator : IAllocator {
   void Free(void **mem) override {
     TX_BEGIN(pop) {
       pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
-      pmemobj_tx_free(pmemobj_oid(*mem));
+      pmemobj_tx_free(pmemobj_oid(UnsetRecycleFlag(*mem)));
       *mem = nullptr;
     }
     TX_ONABORT {
