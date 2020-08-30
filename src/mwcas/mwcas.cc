@@ -360,13 +360,13 @@ int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
   DCHECK(IsCleanPtr(newval) || newval == kNewValueReserved);
   RAW_CHECK(status_ == kStatusUndecided, "invalid status");
 #if PMWCAS_SAFE_MEMORY == 1
-  if (recycle_policy == kRecycleNever ||
-      recycle_policy == kRecycleNewOnFailure) {
-    oldval = WordDescriptor::SetNoRecycleFlag(oldval);
-  }
-  if (recycle_policy == kRecycleNever ||
+  if (recycle_policy == kRecycleAlways ||
       recycle_policy == kRecycleOldOnSuccess) {
-    newval = WordDescriptor::SetNoRecycleFlag(newval);
+    oldval = WordDescriptor::SetRecycleFlag(oldval);
+  }
+  if (recycle_policy == kRecycleAlways ||
+      recycle_policy == kRecycleNewOnFailure) {
+    newval = WordDescriptor::SetRecycleFlag(newval);
   }
 #else
   RAW_CHECK(recycle_policy == kRecycleNever,

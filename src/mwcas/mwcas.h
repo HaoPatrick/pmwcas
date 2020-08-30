@@ -164,7 +164,7 @@ class alignas(kCacheLineSize) Descriptor {
   /// Descriptor's status_ field which determines whether a CAS that wishes to
   /// make address_ point to WordDescriptor can happen.
   struct WordDescriptor {
-    static const uint64_t kNoRecycleFlag = (uint64_t)1 << 63;
+    static const uint64_t kRecycleFlag = (uint64_t)1 << 63;
 
     /// The target address
     uint64_t* address_;
@@ -186,33 +186,33 @@ class alignas(kCacheLineSize) Descriptor {
 
     inline uint64_t GetOldValue() const {
 #if PMWCAS_SAFE_MEMORY == 1
-      return old_value_ & ~kNoRecycleFlag;
+      return old_value_ & ~kRecycleFlag;
 #else
-      DCHECK((old_value_ & kNoRecycleFlag) == 0);
+      DCHECK((old_value_ & kRecycleFlag) == 0);
       return old_value_;
 #endif
     }
 
     inline uint64_t GetNewValue() const {
 #if PMWCAS_SAFE_MEMORY == 1
-      return new_value_ & ~kNoRecycleFlag;
+      return new_value_ & ~kRecycleFlag;
 #else
-      DCHECK((new_value_ & kNoRecycleFlag) == 0);
+      DCHECK((new_value_ & kRecycleFlag) == 0);
       return new_value_;
 #endif
     }
 
 #if PMWCAS_SAFE_MEMORY == 1
-    inline static uint64_t SetNoRecycleFlag(uint64_t value) {
-      return value | kNoRecycleFlag;
+    inline static uint64_t SetRecycleFlag(uint64_t value) {
+      return value | kRecycleFlag;
     }
 
     inline bool ShouldRecycleOldValue() {
-      return !(old_value_ & kNoRecycleFlag);
+      return old_value_ & kRecycleFlag;
     }
 
     inline bool ShouldRecycleNewValue() {
-      return !(new_value_ & kNoRecycleFlag);
+      return new_value_ & kRecycleFlag;
     }
 #endif
 
