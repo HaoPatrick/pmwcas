@@ -207,13 +207,9 @@ class alignas(kCacheLineSize) Descriptor {
       return value | kRecycleFlag;
     }
 
-    inline bool ShouldRecycleOldValue() {
-      return old_value_ & kRecycleFlag;
-    }
+    inline bool ShouldRecycleOldValue() { return old_value_ & kRecycleFlag; }
 
-    inline bool ShouldRecycleNewValue() {
-      return new_value_ & kRecycleFlag;
-    }
+    inline bool ShouldRecycleNewValue() { return new_value_ & kRecycleFlag; }
 #endif
 
 #ifdef PMEM

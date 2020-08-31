@@ -75,8 +75,9 @@ DescriptorPool::DescriptorPool(uint32_t requested_pool_size,
   RAW_CHECK(pool_size_ > 0, "invalid pool size");
 
   // Create a new pool
-  Allocator::Get()->AllocateAligned(
-      (void**)&descriptors_, sizeof(Descriptor) * pool_size_, kCacheLineSize, false);
+  Allocator::Get()->AllocateAligned((void**)&descriptors_,
+                                    sizeof(Descriptor) * pool_size_,
+                                    kCacheLineSize, false);
   RAW_CHECK(descriptors_, "out of memory");
 
 #ifdef PMDK
