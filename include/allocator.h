@@ -25,12 +25,16 @@ class IAllocator {
   virtual Status Validate(void* bytes) = 0;
 
  protected:
-  static void* SetRecycleFlag(void* ptr) {
-    return (void*)((uint64_t)ptr | (1ull << 63));
+  template <typename T>
+  static T SetRecycleFlag(T ptr) {
+    static_assert(sizeof(T) == sizeof(uint64_t));
+    return (T)((uint64_t)ptr | (1ull << 63));
   }
 
-  static void* UnsetRecycleFlag(void* ptr) {
-    return (void*)((uint64_t)ptr & ~(1ull << 63));
+  template <typename T>
+  static T UnsetRecycleFlag(T ptr) {
+    static_assert(sizeof(T) == sizeof(uint64_t));
+    return (T)((uint64_t)ptr & ~(1ull << 63));
   }
 };
 

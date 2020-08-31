@@ -426,9 +426,26 @@ class PMDKAllocator : IAllocator {
     TX_END
   }
 
+  void AllocateOffset(uint64_t* mem, size_t nSize, bool recycle = true) {
+    TX_BEGIN(pop) {
+      pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
+      uint64_t off = pmemobj_tx_alloc(nSize, TOID_TYPE_NUM(char)).off;
+      if (recycle) {
+        off = SetRecycleFlag(off);
+      }
+      *mem = off;
+    }
+    TX_ONABORT {
+      std::cout
+          << "Allocate: TXN Allocation Error, mem cannot be a DRAM address: "
+          << mem << std::endl;
+    }
+    TX_END
+  }
+
   template <typename T>
-  inline T* GetDirect(T* pmem_offset) {
-    return reinterpret_cast<T*>(reinterpret_cast<uint64_t>(pmem_offset) +
+  inline T* GetDirect(uint64_t pmem_offset) {
+    return reinterpret_cast<T*>(pmem_offset +
                                 reinterpret_cast<char*>(GetPool()));
   }
 
@@ -461,6 +478,20 @@ class PMDKAllocator : IAllocator {
       pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
       pmemobj_tx_free(pmemobj_oid(UnsetRecycleFlag(*mem)));
       *mem = nullptr;
+    }
+    TX_ONABORT {
+      std::cout
+          << "Allocate: TXN Deallocation Error, mem cannot be a DRAM address: "
+          << mem << std::endl;
+    }
+    TX_END
+  }
+
+  void FreeOffset(uint64_t* mem) {
+    TX_BEGIN(pop) {
+      pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
+      pmemobj_tx_free(pmemobj_oid(GetDirect<void>(UnsetRecycleFlag(*mem))));
+      *mem = 0x0;
     }
     TX_ONABORT {
       std::cout
