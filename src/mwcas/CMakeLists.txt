@@ -11,6 +11,6 @@ set_property(GLOBAL APPEND PROPERTY PMWCAS_SRC ${MWCAS_SOURCES})
 
 ADD_PMWCAS_TEST(mwcas_tests)
 
-if(DEFINED ${PMEM})
+if(${PMEM_BACKEND} STREQUAL "PMDK")
   ADD_PMWCAS_TEST(recovery_tests)
 endif()
