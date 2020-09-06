@@ -107,14 +107,26 @@ class FreeCallbackArray {
   /// it is loaded into a different virtual address.
 
   /// Signaure for garbage free callback
-  using FreeCallback = void (*)(void** mem);
+  using Type = uint64_t;
+  using FreeCallback = void (*)(Type* mem);
   using Idx = size_t;
 
   /// Maximum number of FreeCallbacks that can be registered
   static constexpr Idx kFreeCallbackCapacity = 16;
 
   /// The default free callback used if no callback is specified by the user
-  static void DefaultFreeCallback(void** mem) { Allocator::Get()->Free(mem); }
+  static void DefaultFreeCallback(Type* mem) {
+#ifdef PMEM
+#ifdef PMDK
+    auto allocator = reinterpret_cast<PMDKAllocator*>(Allocator::Get());
+    allocator->FreeOffset(mem);
+#else
+    static_assert(false, "not implemented");
+#endif
+#else
+    Allocator::Get()->Free(mem);
+#endif
+  }
 
   FreeCallbackArray() { RegisterFreeCallback(DefaultFreeCallback); }
 

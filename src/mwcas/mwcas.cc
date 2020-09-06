@@ -114,6 +114,11 @@ void DescriptorPool::Recovery(bool enable_stats) {
   RAW_CHECK(descriptors_, "invalid descriptor array pointer");
   RAW_CHECK(pool_size_ > 0, "invalid pool size");
 
+  // Initialize free callback array before scanning desc pool
+  // Release first: whatever was there is not interpretable
+  free_callbacks_.release();
+  free_callbacks_ = std::make_unique<FreeCallbackArray>();
+
 #ifdef PMDK
   auto new_pmdk_pool =
       reinterpret_cast<PMDKAllocator*>(Allocator::Get())->GetPool();
@@ -132,7 +137,10 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
     desc.assert_valid_status();
 
+#if 0
     // Shift the old address to adapt to the new pool
+    // FIXME(shiges): cannot do the shifting here - we'll be doomed
+    // if there is a repeated crash.
     for (int w = 0; w < desc.count_; ++w) {
       auto& word = desc.words_[w];
       if ((uint64_t)word.address_ == Descriptor::kAllocNullAddress) {
@@ -140,6 +148,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
       }
       word.address_ = (uint64_t*)((uint64_t)word.address_ + adjust_offset);
     }
+#endif
 
     // Otherwise do recovery
     uint32_t status = desc.status_ & ~Descriptor::kStatusDirtyFlag;
@@ -150,12 +159,14 @@ void DescriptorPool::Recovery(bool enable_stats) {
                status == Descriptor::kStatusFailed) {
       RecoveryMetrics::IncValue(roll_back_desc);
 
-      for (int w = 0; w < desc.count_; ++w) {
-        auto& word = desc.words_[w];
+      for (uint32_t i = 0; i < DESC_CAP; ++i) {
+        auto& word = desc.words_[i];
         if ((uint64_t)word.address_ == Descriptor::kAllocNullAddress) {
           continue;
         }
-        uint64_t val = Descriptor::CleanPtr(*word.address_);
+        uint64_t* address =
+            (uint64_t*)((uint64_t)word.address_ + adjust_offset);
+        uint64_t val = Descriptor::CleanPtr(*address);
         val += adjust_offset;
         if (val == (uint64_t)&desc || val == (uint64_t)&word) {
           // If it's a CondCAS descriptor, then MwCAS descriptor wasn't
@@ -171,12 +182,20 @@ void DescriptorPool::Recovery(bool enable_stats) {
                     << " at 0x" << word.address_ << std::endl;
         }
       }
+
+      auto free_callback = free_callbacks_->GetFreeCallback(desc.callback_idx_);
+      for (uint32_t i = 0; i < DESC_CAP; ++i) {
+        auto& word = desc.words_[i];
+        if (word.ShouldRecycleNewValue()) {
+          free_callback(word.GetNewValuePtr());
+        }
+      }
     } else {
       RAW_CHECK(status == Descriptor::kStatusSucceeded, "invalid status");
       RecoveryMetrics::IncValue(roll_forward_desc);
 
-      for (int w = 0; w < desc.count_; ++w) {
-        auto& word = desc.words_[w];
+      for (uint32_t i = 0; i < DESC_CAP; ++i) {
+        auto& word = desc.words_[i];
 
         if ((uint64_t)word.address_ == Descriptor::kAllocNullAddress) {
           continue;
@@ -199,6 +218,14 @@ void DescriptorPool::Recovery(bool enable_stats) {
           RecoveryMetrics::IncValue(roll_back_words);
           LOG(INFO) << "Applied old value 0x" << std::hex << word.GetOldValue()
                     << " at 0x" << word.address_ << std::endl;
+        }
+      }
+
+      auto free_callback = free_callbacks_->GetFreeCallback(desc.callback_idx_);
+      for (uint32_t i = 0; i < DESC_CAP; ++i) {
+        auto& word = desc.words_[i];
+        if (word.ShouldRecycleOldValue()) {
+          free_callback(word.GetOldValuePtr());
         }
       }
     }
@@ -826,11 +853,11 @@ void Descriptor::DeallocateMemory() {
     auto status = status_;
     if (status == kStatusSucceeded) {
       if (word.ShouldRecycleOldValue()) {
-        free_callback((void**)word.GetOldValuePtr());
+        free_callback(word.GetOldValuePtr());
       }
     } else if (status == kStatusFailed) {
       if (word.ShouldRecycleNewValue()) {
-        free_callback((void**)word.GetNewValuePtr());
+        free_callback(word.GetNewValuePtr());
       }
     }
 #if 0
