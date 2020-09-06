@@ -57,8 +57,10 @@ void ArraySanityCheck(uint64_t* array) {
 }
 
 struct RootObj {
-  pmwcas::DescriptorPool* pool_addr;
-  uint64_t* array;
+  // pmwcas::DescriptorPool* pool_addr;
+  PMEMoid pool_addr;
+  // uint64_t* array;
+  PMEMoid array;
 };
 
 void thread_workload(pmwcas::DescriptorPool* descriptor_pool, uint64_t* array,
@@ -102,7 +104,7 @@ void thread_workload(pmwcas::DescriptorPool* descriptor_pool, uint64_t* array,
 namespace pmwcas {
 void child_process_work() {
   pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create(
-                          "/mnt/pmem0/mwcas_test_pool", "mwcas_linked_layout",
+                          "mwcas_recovery_test_pool", "mwcas_linked_layout",
                           static_cast<uint64_t>(1024) * 1024 * 1204 * 1),
                       pmwcas::PMDKAllocator::Destroy,
                       pmwcas::LinuxEnvironment::Create,
@@ -111,19 +113,22 @@ void child_process_work() {
 
   auto* root_obj = (RootObj*)allocator_->GetRoot(sizeof(RootObj));
 
-  allocator_->Allocate((void**)&(root_obj->pool_addr), sizeof(DescriptorPool));
-  new (root_obj->pool_addr)
+  pmemobj_zalloc(allocator_->GetPool(), &root_obj->pool_addr,
+    sizeof(pmwcas::DescriptorPool), TOID_TYPE_NUM(char));
+  new (pmemobj_direct(root_obj->pool_addr))
       pmwcas::DescriptorPool(10000, WORKLOAD_THREAD_CNT + 1, false);
 
-  allocator_->Allocate((void**)&(root_obj->array),
-                       sizeof(uint64_t) * ARRAY_SIZE);
+  pmemobj_zalloc(allocator_->GetPool(), &root_obj->array,
+    sizeof(uint64_t) * ARRAY_SIZE, TOID_TYPE_NUM(char));
 
-  auto descriptor_pool = root_obj->pool_addr;
-  uint64_t* array = root_obj->array;
+  auto descriptor_pool =
+    (pmwcas::DescriptorPool*)pmemobj_direct(root_obj->pool_addr);
+  uint64_t* array =
+    (uint64_t*)pmemobj_direct(root_obj->array);
   memset(array, ARRAY_INIT_VALUE, sizeof(uint64_t) * ARRAY_SIZE);
   pmwcas::NVRAM::Flush(sizeof(RootObj), root_obj);
-  pmwcas::NVRAM::Flush(sizeof(DescriptorPool), root_obj->pool_addr);
-  pmwcas::NVRAM::Flush(sizeof(uint64_t) * ARRAY_SIZE, root_obj->array);
+  pmwcas::NVRAM::Flush(sizeof(DescriptorPool), descriptor_pool);
+  pmwcas::NVRAM::Flush(sizeof(uint64_t) * ARRAY_SIZE, array);
   LOG(INFO) << "data flushed" << std::endl;
 
   /// Step 1: start the workload on multiple threads;
@@ -152,16 +157,19 @@ GTEST_TEST(PMwCASTest, RecoverySingleThreaded) {
   } else {
     LOG(FATAL) << "fork failed" << std::endl;
   }
+  LOG(INFO) << "Recovery starts here.";
   pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create(
-                          "/mnt/pmem0/mwcas_test_pool", "mwcas_linked_layout",
+                          "mwcas_recovery_test_pool", "mwcas_linked_layout",
                           static_cast<uint64_t>(1024) * 1024 * 1204 * 1),
                       pmwcas::PMDKAllocator::Destroy,
                       pmwcas::LinuxEnvironment::Create,
                       pmwcas::LinuxEnvironment::Destroy);
   auto* allocator_ = (PMDKAllocator*)Allocator::Get();
   auto* root_obj = (RootObj*)allocator_->GetRoot(sizeof(RootObj));
-  auto descriptor_pool = root_obj->pool_addr;
-  uint64_t* array = root_obj->array;
+  auto descriptor_pool =
+    (pmwcas::DescriptorPool*)pmemobj_direct(root_obj->pool_addr);
+  uint64_t* array =
+    (uint64_t*)pmemobj_direct(root_obj->array);
 
   ArrayPreScan(array);
 
