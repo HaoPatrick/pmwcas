@@ -234,7 +234,7 @@ class TlsAllocator : public IAllocator {
     free(allocator);
   }
 
-  void Allocate(void **mem, size_t nSize, bool recycle = true) override {
+  void Allocate(void **mem, size_t nSize, bool recycle = false) override {
     *mem= TlsAllocate(nSize);
     if (recycle) {
       *mem = SetRecycleFlag(*mem);
@@ -260,7 +260,7 @@ class TlsAllocator : public IAllocator {
     }
   }
 
-  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment, bool recycle = true) override {
+  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment, bool recycle = false) override {
     /// TODO(tzwang): take care of aligned allocations
     RAW_CHECK(nAlignment == kCacheLineSize, "unsupported alignment.");
     Allocate(mem, nSize, recycle);
@@ -314,7 +314,7 @@ class DefaultAllocator : IAllocator {
     free(allocator);
   }
 
-  void Allocate(void **mem, size_t nSize, bool recycle = true) override {
+  void Allocate(void **mem, size_t nSize, bool recycle = false) override {
     int n = posix_memalign(mem, kCacheLineSize, nSize);
     if (recycle) {
       *mem = SetRecycleFlag(*mem);
@@ -331,7 +331,7 @@ class DefaultAllocator : IAllocator {
     free(pBytes);
   }
 
-  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment, bool recycle = true) override {
+  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment, bool recycle = false) override {
     RAW_CHECK(nAlignment == kCacheLineSize, "unsupported alignment.");
     return Allocate(mem, nSize, recycle);
   }
@@ -415,7 +415,7 @@ class PMDKAllocator : IAllocator {
     free(allocator);
   }
 
-  void Allocate(void** mem, size_t nSize, bool recycle = true) override {
+  void Allocate(void** mem, size_t nSize, bool recycle = false) override {
     TX_BEGIN(pop) {
       pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
       void* ptr = pmemobj_direct(pmemobj_tx_alloc(nSize, TOID_TYPE_NUM(char)));
@@ -469,7 +469,7 @@ class PMDKAllocator : IAllocator {
     POBJ_FREE(&ptr_cpy);
   }
 
-  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment, bool recycle = true) override {
+  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment, bool recycle = false) override {
     RAW_CHECK(nAlignment == kCacheLineSize, "unsupported alignment.");
     return Allocate(mem, nSize, recycle);
   }
