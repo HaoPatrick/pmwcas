@@ -430,9 +430,9 @@ class PMDKAllocator : IAllocator {
   }
 
   template <typename T>
-  inline T* GetOffset(T* pmem_direct) {
-    return reinterpret_cast<T*>(reinterpret_cast<char*>(pmem_direct) -
-                                reinterpret_cast<char*>(GetPool()));
+  inline uint64_t GetOffset(T* pmem_direct) {
+    return static_cast<uint64_t>(reinterpret_cast<char*>(pmem_direct) -
+                                 reinterpret_cast<char*>(GetPool()));
   }
 
   void AllocateDirect(void** mem, size_t nSize) { Allocate(mem, nSize); }
