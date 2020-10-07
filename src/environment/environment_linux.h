@@ -234,11 +234,8 @@ class TlsAllocator : public IAllocator {
     free(allocator);
   }
 
-  void Allocate(void **mem, size_t nSize, bool recycle = false) override {
+  void Allocate(void **mem, size_t nSize) override {
     *mem= TlsAllocate(nSize);
-    if (recycle) {
-      *mem = SetRecycleFlag(*mem);
-    }
     DCHECK(*mem);
   }
 
@@ -260,10 +257,10 @@ class TlsAllocator : public IAllocator {
     }
   }
 
-  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment, bool recycle = false) override {
+  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment) override {
     /// TODO(tzwang): take care of aligned allocations
     RAW_CHECK(nAlignment == kCacheLineSize, "unsupported alignment.");
-    Allocate(mem, nSize, recycle);
+    Allocate(mem, nSize);
   }
 
   void FreeAligned(void* pBytes) override {
@@ -314,11 +311,8 @@ class DefaultAllocator : IAllocator {
     free(allocator);
   }
 
-  void Allocate(void **mem, size_t nSize, bool recycle = false) override {
+  void Allocate(void **mem, size_t nSize) override {
     int n = posix_memalign(mem, kCacheLineSize, nSize);
-    if (recycle) {
-      *mem = SetRecycleFlag(*mem);
-    }
     RAW_CHECK(n == 0, "allocator error.");
   }
 
@@ -331,9 +325,9 @@ class DefaultAllocator : IAllocator {
     free(pBytes);
   }
 
-  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment, bool recycle = false) override {
+  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment) override {
     RAW_CHECK(nAlignment == kCacheLineSize, "unsupported alignment.");
-    return Allocate(mem, nSize, recycle);
+    return Allocate(mem, nSize);
   }
 
   void FreeAligned(void* pBytes) override {
@@ -415,14 +409,11 @@ class PMDKAllocator : IAllocator {
     free(allocator);
   }
 
-  void Allocate(void** mem, size_t nSize, bool recycle = false) override {
+  void Allocate(void** mem, size_t nSize) override {
     TX_BEGIN(pop) {
       pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
-      void* ptr = pmemobj_direct(pmemobj_tx_alloc(nSize, TOID_TYPE_NUM(char)));
-      if (recycle) {
-        ptr = SetRecycleFlag(ptr);
-      }
-      *mem = ptr;
+      *mem =
+          (char*)pmemobj_direct(pmemobj_tx_alloc(nSize, TOID_TYPE_NUM(char)));
     }
     TX_ONABORT {
       std::cout
@@ -469,9 +460,9 @@ class PMDKAllocator : IAllocator {
     POBJ_FREE(&ptr_cpy);
   }
 
-  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment, bool recycle = false) override {
+  void AllocateAligned(void **mem, size_t nSize, uint32_t nAlignment) override {
     RAW_CHECK(nAlignment == kCacheLineSize, "unsupported alignment.");
-    return Allocate(mem, nSize, recycle);
+    return Allocate(mem, nSize);
   }
 
   void FreeAligned(void* pBytes) override {
