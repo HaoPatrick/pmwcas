@@ -81,6 +81,7 @@
 #include "src/common/environment_internal.h"
 #include "src/common/epoch.h"
 #include "src/common/garbage_list_unsafe.h"
+#include "src/util/nv_ptr.h"
 #include "src/util/nvram.h"
 
 namespace pmwcas {
@@ -221,7 +222,7 @@ class alignas(kCacheLineSize) Descriptor {
     static const uint64_t kRecycleFlag = (uint64_t)1 << 63;
 
     /// The target address
-    uint64_t* address_;
+    nv_ptr<uint64_t> address_;
 
     /// The original old value stored at /a Address
     uint64_t old_value_;
@@ -230,12 +231,12 @@ class alignas(kCacheLineSize) Descriptor {
     uint64_t new_value_;
 
     /// The parent Descriptor's status
-    uint32_t* status_address_;
+    nv_ptr<uint32_t> status_address_;
 
     /// Returns the parent descriptor for this particular word
-    inline Descriptor* GetDescriptor() {
-      return (Descriptor*)((uint64_t)status_address_ -
-                           offsetof(Descriptor, status_));
+    inline nv_ptr<Descriptor> GetDescriptor() {
+      return nv_ptr<Descriptor>((uint64_t)status_address_ -
+                                offsetof(Descriptor, status_));
     }
 
     inline uint64_t GetOldValue() const {
@@ -365,7 +366,7 @@ class alignas(kCacheLineSize) Descriptor {
 #endif
 
   /// Retrieve the index position in the descriptor of the given address.
-  int32_t GetInsertPosition(uint64_t* addr);
+  int32_t GetInsertPosition(nv_ptr<uint64_t> addr);
 
 #ifndef PMEM
   /// Complete the RDCSS operation.

@@ -9,6 +9,7 @@
 #include "src/common/allocator_internal.h"
 #include "src/common/environment_internal.h"
 #include "src/mwcas/mwcas.h"
+#include "src/util/nv_ptr.h"
 
 namespace pmwcas {
 

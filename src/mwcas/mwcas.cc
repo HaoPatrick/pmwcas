@@ -179,10 +179,12 @@ void DescriptorPool::Recovery(bool enable_stats) {
           word.PersistAddress();
           RecoveryMetrics::IncValue(roll_back_words);
           LOG(INFO) << "Applied old value 0x" << std::hex << word.GetOldValue()
-                    << " at 0x" << word.address_ << std::endl;
+                    << " at 0x" << static_cast<uint64_t>(word.address_)
+                    << std::endl;
         }
       }
 
+#if PMWCAS_SAFE_MEMORY == 1
       auto free_callback = free_callbacks_->GetFreeCallback(desc.callback_idx_);
       for (uint32_t i = 0; i < DESC_CAP; ++i) {
         auto& word = desc.words_[i];
@@ -190,6 +192,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
           free_callback(word.GetNewValuePtr());
         }
       }
+#endif
     } else {
       RAW_CHECK(status == Descriptor::kStatusSucceeded, "invalid status");
       RecoveryMetrics::IncValue(roll_forward_desc);
@@ -211,16 +214,19 @@ void DescriptorPool::Recovery(bool enable_stats) {
           word.PersistAddress();
           RecoveryMetrics::IncValue(roll_forward_words);
           LOG(INFO) << "Applied new value 0x" << std::hex << word.GetNewValue()
-                    << " at 0x" << word.address_;
+                    << " at 0x" << static_cast<uint64_t>(word.address_)
+                    << std::endl;
         } else if ((val + adjust_offset) == (uint64_t)&word) {
           *word.address_ = word.GetOldValue();
           word.PersistAddress();
           RecoveryMetrics::IncValue(roll_back_words);
           LOG(INFO) << "Applied old value 0x" << std::hex << word.GetOldValue()
-                    << " at 0x" << word.address_ << std::endl;
+                    << " at 0x" << static_cast<uint64_t>(word.address_)
+                    << std::endl;
         }
       }
 
+#if PMWCAS_SAFE_MEMORY == 1
       auto free_callback = free_callbacks_->GetFreeCallback(desc.callback_idx_);
       for (uint32_t i = 0; i < DESC_CAP; ++i) {
         auto& word = desc.words_[i];
@@ -228,6 +234,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
           free_callback(word.GetOldValuePtr());
         }
       }
+#endif
     }
 
     for (int w = 0; w < desc.count_; ++w) {
@@ -331,7 +338,7 @@ Descriptor::Descriptor(DescriptorPartition* partition,
   owner_partition_ = partition;
   free_callbacks_ = callbacks;
   for (uint32_t i = 0; i < DESC_CAP; ++i) {
-    DCHECK(words_[i].address_ == 0x0);
+    DCHECK(!words_[i].address_);
     DCHECK(words_[i].old_value_ == 0x0);
     DCHECK(words_[i].new_value_ == 0x0);
     words_[i].status_address_ = &status_;
@@ -344,7 +351,7 @@ void Descriptor::Initialize() {
 #if defined(PMEM) && not(defined(NDEBUG))
   // For PMwCAS we want to always start with a clean slate
   for (uint32_t i = 0; i < DESC_CAP; ++i) {
-    DCHECK(words_[i].address_ == 0x0);
+    DCHECK(!words_[i].address_);
     DCHECK(words_[i].old_value_ == 0x0);
     DCHECK(words_[i].new_value_ == 0x0);
   }
@@ -370,7 +377,7 @@ void Descriptor::Finalize() {
   status_ = kStatusFinished;
 #ifdef PMEM
   for (uint32_t i = 0; i < count_; ++i) {
-    words_[i].address_ = 0x0;
+    words_[i].address_ = nullptr;
     words_[i].old_value_ = 0x0;
     words_[i].new_value_ = 0x0;
   }
@@ -408,7 +415,7 @@ int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
   return insertpos;
 }
 
-int32_t Descriptor::GetInsertPosition(uint64_t* addr) {
+int32_t Descriptor::GetInsertPosition(nv_ptr<uint64_t> addr) {
   DCHECK(uint64_t(addr) % sizeof(uint64_t) == 0);
   RAW_CHECK(count_ < DESC_CAP, "too many words");
 
@@ -470,12 +477,14 @@ uint64_t Descriptor::CondCAS(uint32_t word_index, WordDescriptor desc[],
 
 retry:
   uint64_t old_value = w->GetOldValue();
-  uint64_t ret = CompareExchange64(w->address_, cond_descptr, old_value);
+  uint64_t ret = CompareExchange64(static_cast<uint64_t*>(w->address_),
+                                   cond_descptr, old_value);
 #ifdef PMEM
   if (ret & dirty_flag) {
 #if PMWCAS_THREAD_HELP == 1
     w->PersistAddress();
-    CompareExchange64(w->address_, ret & ~dirty_flag, ret);
+    CompareExchange64(static_cast<uint64_t*>(w->address_), ret & ~dirty_flag,
+                      ret);
 #endif
     // TODO(shiges): improve this busy-waiting with less CAS operations
     goto retry;
@@ -520,10 +529,12 @@ void Descriptor::PersistentCompleteCondCAS(WordDescriptor* wd) {
   uint64_t desired =
       mdesc->ReadPersistStatus() == kStatusUndecided ? ptr : wd->GetOldValue();
   desired = SetFlags(desired, kDirtyFlag);
-  uint64_t rval = CompareExchange64(wd->address_, desired, expected);
+  uint64_t rval = CompareExchange64(static_cast<uint64_t*>(wd->address_),
+                                    desired, expected);
   if (rval == expected || rval == desired) {
     wd->PersistAddress();
-    CompareExchange64(wd->address_, desired & ~kDirtyFlag, desired);
+    CompareExchange64(static_cast<uint64_t*>(wd->address_),
+                      desired & ~kDirtyFlag, desired);
   }
 }
 #endif
@@ -695,7 +706,9 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
       return words_[a].address_ < words_[b].address_;
     });
     for (uint32_t i = 1; i < count_; ++i) {
-      DCHECK(words_[indexes_[i - 1]].address_ < words_[indexes_[i]].address_);
+      auto a0 = static_cast<uint64_t>(words_[indexes_[i - 1]].address_);
+      auto a1 = static_cast<uint64_t>(words_[indexes_[i]].address_);
+      DCHECK(a0 < a1);
     }
     RAW_CHECK(status_ == kStatusUndecided, "invalid status");
 
@@ -783,10 +796,12 @@ phase_2:
     uint64_t val = succeeded ? wd->GetNewValue() : wd->GetOldValue();
     val = SetFlags(val, kDirtyFlag);
 
-    uint64_t rval = CompareExchange64(wd->address_, val, descptr);
+    uint64_t rval =
+        CompareExchange64(static_cast<uint64_t*>(wd->address_), val, descptr);
     if (rval == descptr || rval == val) {
       wd->PersistAddress();
-      CompareExchange64(wd->address_, val & ~kDirtyFlag, val);
+      CompareExchange64(static_cast<uint64_t*>(wd->address_), val & ~kDirtyFlag,
+                        val);
     }
   }
 
