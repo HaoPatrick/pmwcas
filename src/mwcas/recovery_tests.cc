@@ -84,10 +84,15 @@ void thread_workload(pmwcas::DescriptorPool* descriptor_pool, uint64_t* array,
     /// randomly select array items to perform MwCAS
     for (const auto& it : positions) {
       auto item = array + it;
+#if 0
       auto old_val = *item;
       while (!pmwcas::Descriptor::IsCleanPtr(old_val)) {
         old_val = __atomic_load_n(item, __ATOMIC_SEQ_CST);
       }
+#else
+      auto old_val =
+          ((pmwcas::MwcTargetField<uint64_t>*)item)->GetValueProtected();
+#endif
       desc.AddEntry(item, old_val, old_val + 1);
     }
 
@@ -184,8 +189,8 @@ GTEST_TEST(PMwCASTest, RecoverySingleThreaded) {
     auto value = array[i];
 
     if (!pmwcas::Descriptor::IsCleanPtr(value)) {
-      LOG(INFO) << "Invalid value 0x" << std::hex << value << " at i=" << i
-                << std::endl;
+      LOG(INFO) << "Invalid value 0x" << std::hex << value
+                << " at " << &array[i] << std::endl;
     }
     // ASSERT_TRUE(pmwcas::Descriptor::IsCleanPtr(value));
 
@@ -198,9 +203,15 @@ GTEST_TEST(PMwCASTest, RecoverySingleThreaded) {
   LOG(INFO) << "=============================\n";
   LOG(INFO) << "Array histogram\n";
   LOG(INFO) << "value\tcount\n";
+  uint32_t total_cnt = 0;
   for (const auto& item : histogram) {
-    LOG(INFO) << item.first << "\t" << item.second << std::endl;
+    auto format =
+        (pmwcas::Descriptor::IsCleanPtr(item.first)) ? std::dec : std::hex;
+    LOG(INFO) << format << item.first << std::dec << "\t" << item.second
+              << std::endl;
+    total_cnt += item.second;
   }
+  LOG(INFO) << "Total count: " << total_cnt << std::endl;
 
   /// Step 6: perform random work over the pool again, there should not be any
   /// error.
@@ -217,6 +228,7 @@ GTEST_TEST(PMwCASTest, RecoverySingleThreaded) {
 }  // namespace pmwcas
 
 int main(int argc, char** argv) {
+  // ::google::InitGoogleLogging(argv[0]);
   ::testing::InitGoogleTest(&argc, argv);
 
 #ifndef PMDK
