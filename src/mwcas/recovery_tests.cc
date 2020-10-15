@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <stdlib.h>
+#include <fcntl.h>
 
 #include <chrono>
 #include <random>
@@ -22,6 +23,7 @@ static const uint64_t ARRAY_SIZE = 1024;
 static const uint8_t ARRAY_INIT_VALUE = 0;
 static const uint32_t UPDATE_ROUND = 1024 * 1024;
 static const uint32_t WORKLOAD_THREAD_CNT = 4;
+static const char* SEMAPHORE_NAME = "/mwcas-recovery-test-sem";
 
 void ArrayPreScan(uint64_t* array) {
   uint64_t dirty_cnt{0}, concas_cnt{0}, mwcas_cnt{0};
@@ -107,7 +109,7 @@ void thread_workload(pmwcas::DescriptorPool* descriptor_pool, uint64_t* array,
 }
 
 namespace pmwcas {
-void child_process_work() {
+void child_process_work(sem_t* sem) {
   pmwcas::InitLibrary(pmwcas::PMDKAllocator::Create(
                           "mwcas_recovery_test_pool", "mwcas_linked_layout",
                           static_cast<uint64_t>(1024) * 1024 * 1204 * 1),
@@ -136,6 +138,7 @@ void child_process_work() {
   pmwcas::NVRAM::Flush(sizeof(uint64_t) * ARRAY_SIZE, array);
   LOG(INFO) << "data flushed" << std::endl;
 
+  sem_post(sem);
   /// Step 1: start the workload on multiple threads;
   std::thread workers[WORKLOAD_THREAD_CNT];
   for (uint32_t t = 0; t < WORKLOAD_THREAD_CNT; t += 1) {
@@ -148,16 +151,23 @@ void child_process_work() {
 }
 
 GTEST_TEST(PMwCASTest, RecoverySingleThreaded) {
+  sem_t* sem = sem_open(SEMAPHORE_NAME, O_CREAT, 0600, 0);
+  if (sem == SEM_FAILED) {
+    LOG(FATAL) << "Semaphore creation failure, errno: " << errno;
+  }
+  sem_unlink(SEMAPHORE_NAME);
   pid_t pid = fork();
   if (pid > 0) {
-    /// Step 2: wait for some time;
+    /// Step 2: wait for some time; make sure child process has already
+    /// persisted the root object and started actual work
+    sem_wait(sem);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     /// Step 3: force kill all running threads without noticing them
     kill(pid, SIGKILL);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   } else if (pid == 0) {
-    child_process_work();
+    child_process_work(sem);
     return;
   } else {
     LOG(FATAL) << "fork failed" << std::endl;
@@ -224,6 +234,7 @@ GTEST_TEST(PMwCASTest, RecoverySingleThreaded) {
   }
 
   ArraySanityCheck(array);
+  sem_close(sem);
 }
 }  // namespace pmwcas
 
