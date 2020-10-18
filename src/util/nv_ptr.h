@@ -19,6 +19,10 @@ struct nv_ptr {
   friend bool operator!=(nv_ptr<T> l, nv_ptr<T> r) { return !(l == r); }
   friend bool operator==(nv_ptr<T> l, std::nullptr_t) { return l.offset_ == 0; }
   friend bool operator!=(nv_ptr<T> l, std::nullptr_t) { return l.offset_ != 0; }
+  friend bool operator==(nv_ptr<T> l, T *r) {
+    return toPointer(l.offset_) == r;
+  }
+  friend bool operator!=(nv_ptr<T> l, T *r) { return !(l == r); }
   friend bool operator<(nv_ptr<T> l, nv_ptr<T> r) {
     return l.offset_ < r.offset_;
   }

@@ -274,7 +274,8 @@ class alignas(kCacheLineSize) Descriptor {
 #ifdef PMEM
     /// Persist the data pointed to by address_
     inline void PersistAddress() {
-      NVRAM::Flush(sizeof(uint64_t*), (void*)address_);
+      uint64_t* addr = address_;
+      NVRAM::Flush(sizeof(uint64_t), addr);
     }
 #endif
   };
@@ -319,12 +320,12 @@ class alignas(kCacheLineSize) Descriptor {
   /// Adds information about a new word to be modifiec by the MwCAS operator.
   /// Word descriptors are stored sorted on the word address to prevent
   /// livelocks. Return value is negative if the descriptor is full.
-  int32_t AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
+  int32_t AddEntry(nv_ptr<uint64_t> addr, uint64_t oldval, uint64_t newval,
                    uint32_t recycle_policy = kRecycleNever);
 
   /// Reserve a slot in the words array, but don't know what the new value is
   /// yet. The application should use GetNewValue[Ptr] to fill in later.
-  inline uint32_t ReserveAndAddEntry(uint64_t* addr, uint64_t oldval,
+  inline uint32_t ReserveAndAddEntry(nv_ptr<uint64_t> addr, uint64_t oldval,
                                      uint32_t recycle_policy) {
     RAW_CHECK(recycle_policy == kRecycleAlways ||
                   recycle_policy == kRecycleNewOnFailure,
@@ -751,7 +752,7 @@ class MwcTargetField {
                 "dirty flag set on CondCAS descriptor");
 
       Descriptor::WordDescriptor* wd =
-          (Descriptor::WordDescriptor*)Descriptor::CleanPtr(val);
+          nv_ptr<Descriptor::WordDescriptor>(Descriptor::CleanPtr(val));
       Descriptor::PersistentCompleteCondCAS(wd);
 #endif
       goto retry;
@@ -769,7 +770,7 @@ class MwcTargetField {
     if (val & kMwCASFlag) {
 #if PMWCAS_THREAD_HELP == 1
       // While the address contains a descriptor, help along completing the CAS
-      Descriptor* desc = (Descriptor*)Descriptor::CleanPtr(val);
+      Descriptor* desc = nv_ptr<Descriptor>(Descriptor::CleanPtr(val));
       RAW_CHECK(desc, "invalid descriptor pointer");
       desc->PersistentMwCAS(1);
 #endif

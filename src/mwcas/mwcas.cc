@@ -199,7 +199,6 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
       for (uint32_t i = 0; i < DESC_CAP; ++i) {
         auto& word = desc.words_[i];
-
         if ((uint64_t)word.address_ == Descriptor::kAllocNullAddress) {
           continue;
         }
@@ -385,8 +384,8 @@ void Descriptor::Finalize() {
 #endif
 }
 
-int32_t Descriptor::AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
-                             uint32_t recycle_policy) {
+int32_t Descriptor::AddEntry(nv_ptr<uint64_t> addr, uint64_t oldval,
+                             uint64_t newval, uint32_t recycle_policy) {
   // IsProtected() checks are quite expensive, use DCHECK instead of RAW_CHECK.
   DCHECK(owner_partition_->garbage_list->GetEpoch()->IsProtected());
   DCHECK(IsCleanPtr(oldval));
@@ -473,18 +472,18 @@ uint32_t Descriptor::ReadPersistStatus() {
 uint64_t Descriptor::CondCAS(uint32_t word_index, WordDescriptor desc[],
                              uint64_t dirty_flag) {
   auto* w = &desc[word_index];
-  uint64_t cond_descptr = SetFlags((uint64_t)w, kCondCASFlag);
+  uint64_t cond_descptr =
+      SetFlags((uint64_t)(nv_ptr<WordDescriptor>(w)), kCondCASFlag);
+  uint64_t* addr = w->address_;
 
 retry:
   uint64_t old_value = w->GetOldValue();
-  uint64_t ret = CompareExchange64(static_cast<uint64_t*>(w->address_),
-                                   cond_descptr, old_value);
+  uint64_t ret = CompareExchange64(addr, cond_descptr, old_value);
 #ifdef PMEM
   if (ret & dirty_flag) {
 #if PMWCAS_THREAD_HELP == 1
     w->PersistAddress();
-    CompareExchange64(static_cast<uint64_t*>(w->address_), ret & ~dirty_flag,
-                      ret);
+    CompareExchange64(addr, ret & ~dirty_flag, ret);
 #endif
     // TODO(shiges): improve this busy-waiting with less CAS operations
     goto retry;
@@ -495,7 +494,7 @@ retry:
   if (IsCondCASDescriptorPtr(ret)) {
     // Already a CondCAS descriptor (ie a WordDescriptor pointer)
 #if PMWCAS_THREAD_HELP == 1
-    WordDescriptor* wd = (WordDescriptor*)CleanPtr(ret);
+    WordDescriptor* wd = nv_ptr<WordDescriptor>(CleanPtr(ret));
     RAW_CHECK(wd->address_ == w->address_, "wrong address");
     CompleteCondCAS(wd);
 #endif
@@ -524,17 +523,17 @@ void Descriptor::VolatileCompleteCondCAS(WordDescriptor* wd) {
 /// Complete the RDCSS operation on persistent memory.
 void Descriptor::PersistentCompleteCondCAS(WordDescriptor* wd) {
   Descriptor* mdesc = wd->GetDescriptor();
-  uint64_t ptr = SetFlags(mdesc, kMwCASFlag);
-  uint64_t expected = SetFlags((uint64_t)wd, kCondCASFlag);
+  uint64_t ptr = SetFlags((uint64_t)(nv_ptr<Descriptor>(mdesc)), kMwCASFlag);
+  uint64_t expected =
+      SetFlags((uint64_t)(nv_ptr<WordDescriptor>(wd)), kCondCASFlag);
   uint64_t desired =
       mdesc->ReadPersistStatus() == kStatusUndecided ? ptr : wd->GetOldValue();
   desired = SetFlags(desired, kDirtyFlag);
-  uint64_t rval = CompareExchange64(static_cast<uint64_t*>(wd->address_),
-                                    desired, expected);
+  uint64_t* addr = wd->address_;
+  uint64_t rval = CompareExchange64(addr, desired, expected);
   if (rval == expected || rval == desired) {
     wd->PersistAddress();
-    CompareExchange64(static_cast<uint64_t*>(wd->address_),
-                      desired & ~kDirtyFlag, desired);
+    CompareExchange64(addr, desired & ~kDirtyFlag, desired);
   }
 }
 #endif
@@ -542,7 +541,8 @@ void Descriptor::PersistentCompleteCondCAS(WordDescriptor* wd) {
 #ifdef RTM
 bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
                                        uint64_t dirty_flag) {
-  uint64_t mwcas_descptr = SetFlags(this, kMwCASFlag | dirty_flag);
+  nv_ptr<Descriptor> self = this;
+  uint64_t mwcas_descptr = SetFlags(self, kMwCASFlag | dirty_flag);
   uint64_t tries = 0;
   static const uint64_t kMaxTries = 4;
 
@@ -706,9 +706,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
       return words_[a].address_ < words_[b].address_;
     });
     for (uint32_t i = 1; i < count_; ++i) {
-      auto a0 = static_cast<uint64_t>(words_[indexes_[i - 1]].address_);
-      auto a1 = static_cast<uint64_t>(words_[indexes_[i]].address_);
-      DCHECK(a0 < a1);
+      DCHECK(words_[indexes_[i - 1]].address_ < words_[indexes_[i]].address_);
     }
     RAW_CHECK(status_ == kStatusUndecided, "invalid status");
 
@@ -718,6 +716,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
 
   uint32_t my_status = kStatusSucceeded;
   bool rtm_install_success = false;
+  nv_ptr<Descriptor> self = this;
 
   if (ReadPersistStatus() != kStatusUndecided) {
     // Skip phase 1 if already concluded
@@ -753,7 +752,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
       // (which point to descriptors) before switching to final status, so
       // that recovery will know reliably whether to roll forward or back for
       // this descriptor.
-      if (rval == wd->GetOldValue() || CleanPtr(rval) == (uint64_t)this) {
+      if (rval == wd->GetOldValue() || CleanPtr(rval) == (uint64_t)self) {
         continue;
       }
 
@@ -762,7 +761,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
 #if PMWCAS_THREAD_HELP == 1
         // Clashed with another MWCAS; help complete the other MWCAS if it is
         // still in flight.
-        Descriptor* otherMWCAS = (Descriptor*)CleanPtr(rval);
+        Descriptor* otherMWCAS = nv_ptr<Descriptor>(CleanPtr(rval));
         otherMWCAS->PersistentMwCAS(calldepth + 1);
         MwCASMetrics::AddHelpAttempt();
 #endif
@@ -787,7 +786,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
 
 phase_2:
   bool succeeded = (status_ == kStatusSucceeded);
-  uint64_t descptr = SetFlags(this, kMwCASFlag);
+  uint64_t descptr = SetFlags((uint64_t)self, kMwCASFlag);
   for (uint32_t i = 0; i < count_; i += 1) {
     WordDescriptor* wd = &words_[indexes_[i]];
     if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
