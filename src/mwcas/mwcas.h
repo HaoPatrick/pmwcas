@@ -400,11 +400,6 @@ class alignas(kCacheLineSize) Descriptor {
     return value | flags;
   }
 
-  /// Set the given flags for a target descriptor word.
-  inline static uint64_t SetFlags(Descriptor* desc, uint64_t flags) {
-    return SetFlags((uint64_t)desc, flags);
-  }
-
   /// Mask to indicate the status field is dirty, any reader should first flush
   /// it before use.
   static const uint32_t kStatusDirtyFlag = 1ULL << 31;

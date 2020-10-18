@@ -569,11 +569,11 @@ bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
         if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
           continue;
         }
-        uint64_t val = *wd->address_;
+        uint64_t* addr = wd->address_;
+        uint64_t val = *addr;
         if (val == mwcas_descptr) {
           wd->PersistAddress();
-          CompareExchange64(wd->address_, mwcas_descptr & ~kDirtyFlag,
-                            mwcas_descptr);
+          CompareExchange64(addr, mwcas_descptr & ~kDirtyFlag, mwcas_descptr);
         }
       }
 #endif
@@ -794,13 +794,12 @@ phase_2:
     }
     uint64_t val = succeeded ? wd->GetNewValue() : wd->GetOldValue();
     val = SetFlags(val, kDirtyFlag);
+    uint64_t* addr = wd->address_;
 
-    uint64_t rval =
-        CompareExchange64(static_cast<uint64_t*>(wd->address_), val, descptr);
+    uint64_t rval = CompareExchange64(addr, val, descptr);
     if (rval == descptr || rval == val) {
       wd->PersistAddress();
-      CompareExchange64(static_cast<uint64_t*>(wd->address_), val & ~kDirtyFlag,
-                        val);
+      CompareExchange64(addr, val & ~kDirtyFlag, val);
     }
   }
 
