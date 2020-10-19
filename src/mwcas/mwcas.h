@@ -571,9 +571,6 @@ class DescriptorPool {
   /// Epoch manager controling garbage/access to descriptors.
   EpochManager epoch_;
 
-  /// Track the pmdk pool for recovery purpose
-  uint64_t pmdk_pool_;
-
   /// Array of callbacks to be invoked during memory deallocation
   std::unique_ptr<FreeCallbackArray> free_callbacks_;
 
