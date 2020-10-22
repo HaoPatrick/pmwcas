@@ -14,3 +14,5 @@ ADD_PMWCAS_TEST(mwcas_tests)
 if(${PMEM_BACKEND} STREQUAL "PMDK")
   ADD_PMWCAS_TEST(recovery_tests)
 endif()
+
+ADD_PMWCAS_TEST(mem_safety_tests)
