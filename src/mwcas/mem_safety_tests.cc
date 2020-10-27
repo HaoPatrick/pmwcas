@@ -46,11 +46,13 @@ class PMwCASMemorySafetyTest : public ::testing::Test {
         pmwcas::DescriptorPool(kDescriptorPoolSize, thread_count);
 
     pmemobj_zalloc(allocator_->GetPool(), &root_obj->array,
-                   sizeof(nv_ptr<AllocTestLinkedListNode>) * kTestArraySize,
+                   sizeof(nv_ptr<AllocTestLinkedListNode>) * kTestArraySize * 2,
                    TOID_TYPE_NUM(char));
 
     pool_ = (pmwcas::DescriptorPool *)pmemobj_direct(root_obj->pool);
-    array_ = (nv_ptr<AllocTestLinkedListNode> *)pmemobj_direct(root_obj->array);
+    array1_ =
+        (nv_ptr<AllocTestLinkedListNode> *)pmemobj_direct(root_obj->array);
+    array2_ = &array1_[kTestArraySize];
 
     {
       PMEMobjpool *pop = allocator_->GetPool();
@@ -60,33 +62,41 @@ class PMwCASMemorySafetyTest : public ::testing::Test {
         base_allocations_.insert(addr);
       }
     }
+
+    // prefill array2_ with some nodes
+    for (uint32_t i = 0; i < kTestArraySize; ++i) {
+      auto ptr = reinterpret_cast<uint64_t *>(&array2_[i]);
+      allocator_->AllocateOffset(ptr, sizeof(AllocTestLinkedListNode), false);
+      new (array2_[i]) AllocTestLinkedListNode{i, nullptr};
+    }
+    // leave array1_ empty (i.e. with nullptr)
+
+    {
+      PMEMobjpool *pop = allocator_->GetPool();
+      TOID(char) iter;
+      POBJ_FOREACH_TYPE(pop, iter) {
+        void *addr = pmemobj_direct(iter.oid);
+        if (!contains(base_allocations_, addr)) {
+          user_allocations_.insert(addr);
+        }
+      }
+    }
   }
 
   PMDKAllocator *allocator_;
   pmwcas::DescriptorPool *pool_;
-  nv_ptr<AllocTestLinkedListNode> *array_;
+  nv_ptr<AllocTestLinkedListNode> *array1_;
+  nv_ptr<AllocTestLinkedListNode> *array2_;
 
   std::set<void *> base_allocations_;
+  std::set<void *> user_allocations_;
 
-  bool isNewAllocation(void *addr) {
-    return base_allocations_.find(addr) == base_allocations_.end();
-  }
-
-  std::set<void *> getNewAllocations() {
-    std::set<void *> new_allocations;
-    PMEMobjpool *pop = allocator_->GetPool();
-    TOID(char) iter;
-    POBJ_FOREACH_TYPE(pop, iter) {
-      void *addr = pmemobj_direct(iter.oid);
-      if (isNewAllocation(addr)) {
-        new_allocations.insert(addr);
-      }
-    }
-    return new_allocations;
+  bool contains(std::set<void *> &allocations, void *addr) {
+    return allocations.find(addr) != allocations.end();
   }
 };
 
-TEST_F(PMwCASMemorySafetyTest, SingleThreadSuccess) {
+TEST_F(PMwCASMemorySafetyTest, SingleThreadAllocationSuccess) {
   RandomNumberGenerator rng(rand(), 0, kTestArraySize);
 
   nv_ptr<AllocTestLinkedListNode> *addresses[kWordsToUpdate];
@@ -97,20 +107,22 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadSuccess) {
     values[i] = nullptr;
   }
 
+  nv_ptr<AllocTestLinkedListNode> *array = array1_;
+
   pool_->GetEpoch()->Protect();
 
   for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
   retry:
     uint64_t idx = rng.Generate();
     for (uint32_t j = 0; j < i; ++j) {
-      if (addresses[j] == &array_[idx]) {
+      if (addresses[j] == &array[idx]) {
         goto retry;
       }
     }
 
-    addresses[i] = &array_[idx];
+    addresses[i] = &array[idx];
     values[i] =
-        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array_[idx])
+        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array[idx])
             ->GetValueProtected();
     EXPECT_EQ(values[i], nullptr);
   }
@@ -121,7 +133,7 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadSuccess) {
   for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
     auto idx = descriptor.ReserveAndAddEntry((uint64_t *)addresses[i],
                                              (uint64_t)values[i],
-                                             Descriptor::kRecycleAlways);
+                                             Descriptor::kRecycleNewOnFailure);
     uint64_t *ptr = descriptor.GetNewValuePtr(idx);
     allocator_->AllocateOffset(ptr, sizeof(AllocTestLinkedListNode));
   }
@@ -133,13 +145,24 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadSuccess) {
     auto addr = static_cast<nv_ptr<AllocTestLinkedListNode>>(
         reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(addresses[i])
             ->GetValueProtected());
-    EXPECT_EQ(allocated.count(addr), 0);
+    EXPECT_FALSE(contains(allocated, addr));
     allocated.insert(addr);
   }
 
   pool_->GetEpoch()->Unprotect();
 
-  std::set<void *> new_allocations = getNewAllocations();
+  std::set<void *> new_allocations;
+  {
+    PMEMobjpool *pop = allocator_->GetPool();
+    TOID(char) iter;
+    POBJ_FOREACH_TYPE(pop, iter) {
+      void *addr = pmemobj_direct(iter.oid);
+      if (!contains(base_allocations_, addr) &&
+          !contains(user_allocations_, addr)) {
+        new_allocations.insert(addr);
+      }
+    }
+  }
 
   ASSERT_EQ(allocated.size(), new_allocations.size());
   for (auto i = allocated.begin(), j = new_allocations.begin();
@@ -151,7 +174,7 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadSuccess) {
   Thread::ClearRegistry(true);
 }
 
-TEST_F(PMwCASMemorySafetyTest, SingleThreadFailure) {
+TEST_F(PMwCASMemorySafetyTest, SingleThreadAllocationFailure) {
   RandomNumberGenerator rng(rand(), 0, kTestArraySize);
 
   nv_ptr<AllocTestLinkedListNode> *addresses[kWordsToUpdate];
@@ -162,20 +185,22 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadFailure) {
     values[i] = nullptr;
   }
 
+  nv_ptr<AllocTestLinkedListNode> *array = array1_;
+
   pool_->GetEpoch()->Protect();
 
   for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
   retry:
     uint64_t idx = rng.Generate();
     for (uint32_t j = 0; j < i; ++j) {
-      if (addresses[j] == &array_[idx]) {
+      if (addresses[j] == &array[idx]) {
         goto retry;
       }
     }
 
-    addresses[i] = &array_[idx];
+    addresses[i] = &array[idx];
     values[i] =
-        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array_[idx])
+        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array[idx])
             ->GetValueProtected();
     EXPECT_EQ(values[i], nullptr);
   }
@@ -186,7 +211,7 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadFailure) {
   for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
     auto idx = descriptor.ReserveAndAddEntry((uint64_t *)addresses[i],
                                              (uint64_t)values[i],
-                                             Descriptor::kRecycleAlways);
+                                             Descriptor::kRecycleNewOnFailure);
     uint64_t *ptr = descriptor.GetNewValuePtr(idx);
     allocator_->AllocateOffset(ptr, sizeof(AllocTestLinkedListNode));
   }
@@ -211,7 +236,18 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadFailure) {
     pool_->GetEpoch()->Unprotect();
   }
 
-  std::set<void *> new_allocations = getNewAllocations();
+  std::set<void *> new_allocations;
+  {
+    PMEMobjpool *pop = allocator_->GetPool();
+    TOID(char) iter;
+    POBJ_FOREACH_TYPE(pop, iter) {
+      void *addr = pmemobj_direct(iter.oid);
+      if (!contains(base_allocations_, addr) &&
+          !contains(user_allocations_, addr)) {
+        new_allocations.insert(addr);
+      }
+    }
+  }
 
   ASSERT_EQ(new_allocations.size(), 0);
 
@@ -219,7 +255,7 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadFailure) {
   Thread::ClearRegistry(true);
 }
 
-TEST_F(PMwCASMemorySafetyTest, SingleThreadLeak) {
+TEST_F(PMwCASMemorySafetyTest, SingleThreadAllocationLeak) {
   RandomNumberGenerator rng(rand(), 0, kTestArraySize);
 
   nv_ptr<AllocTestLinkedListNode> *addresses[kWordsToUpdate];
@@ -230,20 +266,22 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadLeak) {
     values[i] = nullptr;
   }
 
+  nv_ptr<AllocTestLinkedListNode> *array = array1_;
+
   pool_->GetEpoch()->Protect();
 
   for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
   retry:
     uint64_t idx = rng.Generate();
     for (uint32_t j = 0; j < i; ++j) {
-      if (addresses[j] == &array_[idx]) {
+      if (addresses[j] == &array[idx]) {
         goto retry;
       }
     }
 
-    addresses[i] = &array_[idx];
+    addresses[i] = &array[idx];
     values[i] =
-        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array_[idx])
+        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array[idx])
             ->GetValueProtected();
     EXPECT_EQ(values[i], nullptr);
   }
@@ -255,7 +293,7 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadLeak) {
   for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
     auto idx = descriptor.ReserveAndAddEntry((uint64_t *)addresses[i],
                                              (uint64_t)values[i],
-                                             Descriptor::kRecycleAlways);
+                                             Descriptor::kRecycleNewOnFailure);
     uint64_t *ptr = descriptor.GetNewValuePtr(idx);
     // Incorrect use of AllocateOffset(). This will leak memory persistently.
     allocator_->AllocateOffset(ptr, sizeof(AllocTestLinkedListNode), false);
@@ -284,7 +322,18 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadLeak) {
     pool_->GetEpoch()->Unprotect();
   }
 
-  std::set<void *> new_allocations = getNewAllocations();
+  std::set<void *> new_allocations;
+  {
+    PMEMobjpool *pop = allocator_->GetPool();
+    TOID(char) iter;
+    POBJ_FOREACH_TYPE(pop, iter) {
+      void *addr = pmemobj_direct(iter.oid);
+      if (!contains(base_allocations_, addr) &&
+          !contains(user_allocations_, addr)) {
+        new_allocations.insert(addr);
+      }
+    }
+  }
 
   ASSERT_EQ(allocated.size(), new_allocations.size());
   for (auto i = allocated.begin(), j = new_allocations.begin();
