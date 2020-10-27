@@ -345,6 +345,191 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadAllocationLeak) {
   Thread::ClearRegistry(true);
 }
 
+TEST_F(PMwCASMemorySafetyTest, SingleThreadDeallocationSuccess) {
+  RandomNumberGenerator rng(rand(), 0, kTestArraySize);
+
+  nv_ptr<AllocTestLinkedListNode> *addresses[kWordsToUpdate];
+  nv_ptr<AllocTestLinkedListNode> values[kWordsToUpdate];
+
+  for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
+    addresses[i] = nullptr;
+    values[i] = nullptr;
+  }
+
+  nv_ptr<AllocTestLinkedListNode> *array = array2_;
+
+  pool_->GetEpoch()->Protect();
+
+  for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
+  retry:
+    uint64_t idx = rng.Generate();
+    for (uint32_t j = 0; j < i; ++j) {
+      if (addresses[j] == &array[idx]) {
+        goto retry;
+      }
+    }
+
+    addresses[i] = &array[idx];
+    values[i] =
+        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array[idx])
+            ->GetValueProtected();
+    ASSERT_NE(values[i], nullptr);
+    EXPECT_EQ(values[i]->key, idx);
+  }
+
+  auto descriptor = pool_->AllocateDescriptor();
+  EXPECT_NE(nullptr, descriptor.GetRaw());
+
+  std::set<void *> deallocated;
+  for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
+    auto idx =
+        descriptor.AddEntry((uint64_t *)addresses[i], (uint64_t)values[i], 0ull,
+                            Descriptor::kRecycleOldOnSuccess);
+    deallocated.insert((pmwcas::AllocTestLinkedListNode *)values[i]);
+  }
+
+  EXPECT_EQ(deallocated.size(), kWordsToUpdate);
+
+  EXPECT_TRUE(descriptor.MwCAS());
+
+  for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
+    auto addr = static_cast<nv_ptr<AllocTestLinkedListNode>>(
+        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(addresses[i])
+            ->GetValueProtected());
+    EXPECT_EQ(addr, nullptr);
+  }
+
+  pool_->GetEpoch()->Unprotect();
+
+  // Loop over the entire descriptor pool to ensure that
+  // the previous descriptor is recycled
+  for (uint32_t i = 0; i < kDescriptorPoolSize; ++i) {
+    pool_->GetEpoch()->Protect();
+    auto desc = pool_->AllocateDescriptor();
+    desc.Abort();
+    pool_->GetEpoch()->Unprotect();
+  }
+
+  std::set<void *> new_user_allocations;
+  {
+    PMEMobjpool *pop = allocator_->GetPool();
+    TOID(char) iter;
+    POBJ_FOREACH_TYPE(pop, iter) {
+      void *addr = pmemobj_direct(iter.oid);
+      if (!contains(base_allocations_, addr)) {
+        new_user_allocations.insert(addr);
+      }
+    }
+  }
+
+  ASSERT_EQ(deallocated.size() + new_user_allocations.size(),
+            user_allocations_.size());
+  for (auto &addr : deallocated) {
+    EXPECT_TRUE(contains(user_allocations_, addr));
+    EXPECT_FALSE(contains(new_user_allocations, addr));
+  }
+  for (auto &addr : new_user_allocations) {
+    EXPECT_TRUE(contains(user_allocations_, addr));
+    EXPECT_FALSE(contains(deallocated, addr));
+  }
+
+  // have to clear the EpochManager entry
+  Thread::ClearRegistry(true);
+}
+
+TEST_F(PMwCASMemorySafetyTest, SingleThreadDeallocationFailure) {
+  RandomNumberGenerator rng(rand(), 0, kTestArraySize);
+
+  nv_ptr<AllocTestLinkedListNode> *addresses[kWordsToUpdate];
+  nv_ptr<AllocTestLinkedListNode> values[kWordsToUpdate];
+
+  for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
+    addresses[i] = nullptr;
+    values[i] = nullptr;
+  }
+
+  nv_ptr<AllocTestLinkedListNode> *array = array2_;
+
+  pool_->GetEpoch()->Protect();
+
+  for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
+  retry:
+    uint64_t idx = rng.Generate();
+    for (uint32_t j = 0; j < i; ++j) {
+      if (addresses[j] == &array[idx]) {
+        goto retry;
+      }
+    }
+
+    addresses[i] = &array[idx];
+    values[i] =
+        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array[idx])
+            ->GetValueProtected();
+    ASSERT_NE(values[i], nullptr);
+    EXPECT_EQ(values[i]->key, idx);
+  }
+
+  auto descriptor = pool_->AllocateDescriptor();
+  EXPECT_NE(nullptr, descriptor.GetRaw());
+
+  std::set<void *> deallocated;
+  for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
+    auto idx =
+        descriptor.AddEntry((uint64_t *)addresses[i], (uint64_t)values[i], 0ull,
+                            Descriptor::kRecycleOldOnSuccess);
+    deallocated.insert((pmwcas::AllocTestLinkedListNode *)values[i]);
+  }
+
+  EXPECT_EQ(deallocated.size(), kWordsToUpdate);
+
+  EXPECT_TRUE(descriptor.Abort().ok());
+
+  for (uint32_t i = 0; i < kWordsToUpdate; ++i) {
+    auto addr = static_cast<nv_ptr<AllocTestLinkedListNode>>(
+        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(addresses[i])
+            ->GetValueProtected());
+    ASSERT_NE(addr, nullptr);
+    EXPECT_EQ(values[i]->key, addresses[i] - array);
+  }
+
+  pool_->GetEpoch()->Unprotect();
+
+  // Loop over the entire descriptor pool to ensure that
+  // the previous descriptor is recycled
+  for (uint32_t i = 0; i < kDescriptorPoolSize; ++i) {
+    pool_->GetEpoch()->Protect();
+    auto desc = pool_->AllocateDescriptor();
+    desc.Abort();
+    pool_->GetEpoch()->Unprotect();
+  }
+
+  std::set<void *> new_user_allocations;
+  {
+    PMEMobjpool *pop = allocator_->GetPool();
+    TOID(char) iter;
+    POBJ_FOREACH_TYPE(pop, iter) {
+      void *addr = pmemobj_direct(iter.oid);
+      if (!contains(base_allocations_, addr)) {
+        new_user_allocations.insert(addr);
+      }
+    }
+  }
+
+  ASSERT_EQ(new_user_allocations.size(), user_allocations_.size());
+  for (auto i = new_user_allocations.begin(), j = user_allocations_.begin();
+       i != new_user_allocations.end() && j != user_allocations_.end();
+       ++i, ++j) {
+    EXPECT_EQ(*i, *j);
+  }
+
+  for (auto &addr : deallocated) {
+    EXPECT_TRUE(contains(new_user_allocations, addr));
+  }
+
+  // have to clear the EpochManager entry
+  Thread::ClearRegistry(true);
+}
+
 #endif
 }  // namespace pmwcas
 
