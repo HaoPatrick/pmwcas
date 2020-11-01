@@ -619,6 +619,166 @@ TEST_F(PMwCASMemorySafetyTest, SingleThreadSwapNoAlloc) {
   Thread::ClearRegistry(true);
 }
 
+TEST_F(PMwCASMemorySafetyTest, SingleThreadRealloc) {
+  const uint32_t kSwapsToPerform = kTestArraySize / 2;
+  RandomNumberGenerator rng(rand(), 0, kTestArraySize);
+
+  nv_ptr<AllocTestLinkedListNode> *array = array2_;
+
+  for (uint32_t i = 0; i < kSwapsToPerform; ++i) {
+    pool_->GetEpoch()->Protect();
+
+    auto descriptor = pool_->AllocateDescriptor();
+    EXPECT_NE(nullptr, descriptor.GetRaw());
+
+    uint64_t idx = rng.Generate();
+
+    nv_ptr<AllocTestLinkedListNode> *addresses = &array[idx];
+    nv_ptr<AllocTestLinkedListNode> values =
+        reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array[idx])
+            ->GetValueProtected();
+
+    EXPECT_EQ(values->key, idx);
+
+    auto entry = descriptor.ReserveAndAddEntry(
+        (uint64_t *)addresses, (uint64_t)values, Descriptor::kRecycleAlways);
+
+    uint64_t *ptr = descriptor.GetNewValuePtr(entry);
+    allocator_->AllocateOffset(ptr, sizeof(AllocTestLinkedListNode));
+    AllocTestLinkedListNode *node =
+        nv_ptr<AllocTestLinkedListNode>(descriptor.GetNewValue(entry));
+    new (node) AllocTestLinkedListNode{values->key, values->next};
+
+    EXPECT_TRUE(descriptor.MwCAS());
+
+    pool_->GetEpoch()->Unprotect();
+  }
+
+  // Loop over the entire descriptor pool to ensure that
+  // the previous descriptors are recycled
+  for (uint32_t i = 0; i < kDescriptorPoolSize; ++i) {
+    pool_->GetEpoch()->Protect();
+    auto desc = pool_->AllocateDescriptor();
+    desc.Abort();
+    pool_->GetEpoch()->Unprotect();
+  }
+
+  std::set<void *> new_user_allocations;
+  {
+    PMEMobjpool *pop = allocator_->GetPool();
+    TOID(char) iter;
+    POBJ_FOREACH_TYPE(pop, iter) {
+      void *addr = pmemobj_direct(iter.oid);
+      if (!contains(base_allocations_, addr)) {
+        new_user_allocations.insert(addr);
+      }
+    }
+  }
+
+  // user allocations should stay the same size
+  ASSERT_EQ(new_user_allocations.size(), user_allocations_.size());
+
+  for (uint32_t i = 0; i < kTestArraySize; ++i) {
+    for (uint32_t j = 0; j < 2; ++j) {
+      ASSERT_TRUE(array[i]);
+      EXPECT_EQ(array[i]->key, i);
+    }
+  }
+
+  // have to clear the EpochManager entry
+  Thread::ClearRegistry(true);
+}
+
+TEST_F(PMwCASMemorySafetyTest, SingleThreadSwapRealloc) {
+  const uint32_t kSwapsToPerform = kTestArraySize / 2;
+  RandomNumberGenerator rng(rand(), 0, kTestArraySize);
+
+  nv_ptr<AllocTestLinkedListNode> *addresses[2];
+  nv_ptr<AllocTestLinkedListNode> values[2];
+
+  for (uint32_t i = 0; i < 2; ++i) {
+    addresses[i] = nullptr;
+    values[i] = nullptr;
+  }
+
+  nv_ptr<AllocTestLinkedListNode> *array[2] = {array1_, array2_};
+
+  for (uint32_t i = 0; i < kSwapsToPerform; ++i) {
+    pool_->GetEpoch()->Protect();
+
+    auto descriptor = pool_->AllocateDescriptor();
+    EXPECT_NE(nullptr, descriptor.GetRaw());
+
+    uint64_t idx = rng.Generate();
+
+    for (uint32_t j = 0; j < 2; ++j) {
+      addresses[j] = &array[j][idx];
+      values[j] =
+          reinterpret_cast<pmwcas::MwcTargetField<uint64_t> *>(&array[j][idx])
+              ->GetValueProtected();
+    }
+
+    ASSERT_TRUE(values[0] == nullptr or values[1] == nullptr);
+
+    uint32_t j = values[0] ? 0 : 1;
+
+    EXPECT_EQ(values[j]->key, idx);
+
+    descriptor.AddEntry((uint64_t *)addresses[j], (uint64_t)values[j], 0ull,
+                        Descriptor::kRecycleOldOnSuccess);
+
+    auto entry = descriptor.ReserveAndAddEntry(
+        (uint64_t *)addresses[1 - j], (uint64_t)values[1 - j],
+        Descriptor::kRecycleNewOnFailure);
+
+    uint64_t *ptr = descriptor.GetNewValuePtr(entry);
+    allocator_->AllocateOffset(ptr, sizeof(AllocTestLinkedListNode));
+    AllocTestLinkedListNode *node =
+        nv_ptr<AllocTestLinkedListNode>(descriptor.GetNewValue(entry));
+    new (node) AllocTestLinkedListNode{values[j]->key, values[j]->next};
+
+    EXPECT_TRUE(descriptor.MwCAS());
+
+    pool_->GetEpoch()->Unprotect();
+  }
+
+  // Loop over the entire descriptor pool to ensure that
+  // the previous descriptors are recycled
+  for (uint32_t i = 0; i < kDescriptorPoolSize; ++i) {
+    pool_->GetEpoch()->Protect();
+    auto desc = pool_->AllocateDescriptor();
+    desc.Abort();
+    pool_->GetEpoch()->Unprotect();
+  }
+
+  std::set<void *> new_user_allocations;
+  {
+    PMEMobjpool *pop = allocator_->GetPool();
+    TOID(char) iter;
+    POBJ_FOREACH_TYPE(pop, iter) {
+      void *addr = pmemobj_direct(iter.oid);
+      if (!contains(base_allocations_, addr)) {
+        new_user_allocations.insert(addr);
+      }
+    }
+  }
+
+  // user allocations should stay the same size
+  ASSERT_EQ(new_user_allocations.size(), user_allocations_.size());
+
+  for (uint32_t i = 0; i < kTestArraySize; ++i) {
+    ASSERT_TRUE(array[0][i] == nullptr or array[1][i] == nullptr);
+    for (uint32_t j = 0; j < 2; ++j) {
+      if (array[j][i]) {
+        EXPECT_EQ(array[j][i]->key, i);
+      }
+    }
+  }
+
+  // have to clear the EpochManager entry
+  Thread::ClearRegistry(true);
+}
+
 #endif
 }  // namespace pmwcas
 
