@@ -16,6 +16,11 @@ namespace pmwcas {
 struct NVRAM {
 #ifdef PMEM
   static inline void Flush(uint64_t bytes, const void* data) {
+#ifdef EADR
+    // eADR platforms have their CPU caches in the persistence domain.
+    // We only need to maintain correct ordering for stores.
+    _mm_sfence();
+#else
 #ifdef PMDK
     auto pmdk_allocator = reinterpret_cast<PMDKAllocator*>(Allocator::Get());
     pmdk_allocator->PersistPtr(data, bytes);
@@ -30,6 +35,7 @@ struct NVRAM {
     } else {
     }
 #endif  // PMDK
+#endif
   }
 #endif  // PMEM
 };
