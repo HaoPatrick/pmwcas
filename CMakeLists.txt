@@ -53,7 +53,7 @@ FUNCTION(PMWCAS_DEFINE_ENV)
   # Descriptor capacity - default four words max
   set(DESC_CAP "4" CACHE STRING "Descriptor capacity")
   add_definitions(-DDESC_CAP=${DESC_CAP})
-  message(STATUS "Descirptor capacity: ${DESC_CAP}")
+  message(STATUS "Descriptor capacity: ${DESC_CAP}")
 ENDFUNCTION()
 
 # The PMWCAS_DEFINE_ENV is used for libraries depend on it to properly setup compile definitions.

@@ -125,7 +125,7 @@ class FreeCallbackArray {
     static_assert(false, "not implemented");
 #endif
 #else
-    Allocator::Get()->Free(mem);
+    Allocator::Get()->Free((void **)mem);
 #endif
   }
 

@@ -522,7 +522,7 @@ retry:
 #ifndef PMEM
 void Descriptor::VolatileCompleteCondCAS(WordDescriptor* wd) {
   Descriptor* mdesc = wd->GetDescriptor();
-  uint64_t ptr = SetFlags(mdesc, kMwCASFlag);
+  uint64_t ptr = SetFlags((uint64_t)mdesc, kMwCASFlag);
   uint64_t expected = (uint64_t)wd | kCondCASFlag;
   uint64_t desired =
       *wd->status_address_ == kStatusUndecided ? ptr : wd->GetOldValue();
@@ -675,7 +675,7 @@ bool Descriptor::VolatileMwCAS(uint32_t calldepth) {
 
 phase_2:
   bool succeeded = (status_ == kStatusSucceeded);
-  uint64_t descptr = SetFlags(this, kMwCASFlag);
+  uint64_t descptr = SetFlags((uint64_t)this, kMwCASFlag);
   for (uint32_t i = 0; i < count_; i += 1) {
     WordDescriptor* wd = &words_[i];
     if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
