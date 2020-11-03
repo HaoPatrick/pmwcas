@@ -127,20 +127,6 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
     desc.assert_valid_status();
 
-#if 0
-    // Shift the old address to adapt to the new pool
-    // FIXME(shiges): cannot do the shifting here - we'll be doomed
-    // if there is a repeated crash.
-    for (int w = 0; w < desc.count_; ++w) {
-      auto& word = desc.words_[w];
-      if ((uint64_t)word.address_ == Descriptor::kAllocNullAddress) {
-        continue;
-      }
-      word.address_ = (uint64_t*)((uint64_t)word.address_ + adjust_offset);
-    }
-#endif
-
-    // Otherwise do recovery
     uint32_t status = desc.status_ & ~Descriptor::kStatusDirtyFlag;
     if (status == Descriptor::kStatusFinished) {
       RecoveryMetrics::IncValue(finished_desc);
@@ -486,9 +472,9 @@ uint64_t Descriptor::CondCAS(uint32_t word_index, WordDescriptor desc[],
   uint64_t cond_descptr =
       SetFlags((uint64_t)(nv_ptr<WordDescriptor>(w)), kCondCASFlag);
   uint64_t* addr = w->address_;
+  uint64_t old_value = w->GetOldValue();
 
 retry:
-  uint64_t old_value = w->GetOldValue();
   uint64_t ret = CompareExchange64(addr, cond_descptr, old_value);
 #ifdef PMEM
   if (ret & dirty_flag) {
@@ -496,7 +482,6 @@ retry:
     w->PersistAddress();
     CompareExchange64(addr, ret & ~dirty_flag, ret);
 #endif
-    // TODO(shiges): improve this busy-waiting with less CAS operations
     goto retry;
   }
 #else
@@ -721,8 +706,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
     }
     RAW_CHECK(status_ == kStatusUndecided, "invalid status");
 
-    // TODO(shiges): just flush the first count_ WordDescriptors?
-    NVRAM::Flush(sizeof(words_), &words_);
+    NVRAM::Flush(sizeof(WordDescriptor) * count_, &words_);
   }
 
   uint32_t my_status = kStatusSucceeded;
@@ -884,43 +868,6 @@ void Descriptor::DeallocateMemory() {
         free_callback(word.GetNewValuePtr());
       }
     }
-#if 0
-    // TODO(shiges): revise the assertions
-    switch (word.recycle_policy_) {
-      case kRecycleNever:
-      case kRecycleOnRecovery:
-        break;
-      case kRecycleAlways:
-        if (status == kStatusSucceeded) {
-          if (word.old_value_ != kNewValueReserved) {
-            free_callback((void**)&word.old_value_);
-          }
-        } else {
-          RAW_CHECK(status == kStatusFailed || status == kStatusFinished,
-                    "incorrect status found on used/discarded descriptor");
-          if (word.new_value_ != kNewValueReserved) {
-            free_callback((void**)&word.new_value_);
-          }
-        }
-        break;
-      case kRecycleOldOnSuccess:
-        if (status == kStatusSucceeded) {
-          if (word.old_value_ != kNewValueReserved) {
-            free_callback((void**)&word.old_value_);
-          }
-        }
-        break;
-      case kRecycleNewOnFailure:
-        if (status != kStatusSucceeded) {
-          if (word.new_value_ != kNewValueReserved) {
-            free_callback_(nullptr, (void**)&word.new_value_);
-          }
-        }
-        break;
-      default:
-        LOG(FATAL) << "invalid recycle policy";
-    }
-#endif
   }
 }
 #endif
