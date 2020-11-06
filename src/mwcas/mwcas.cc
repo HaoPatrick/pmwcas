@@ -137,7 +137,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
       for (uint32_t i = 0; i < DESC_CAP; ++i) {
         auto& word = desc.words_[i];
-        if ((uint64_t)word.address_ == Descriptor::kAllocNullAddress) {
+        if (word.address_ == Descriptor::kAllocNullAddress) {
           continue;
         }
         uint64_t* addr = word.address_;
@@ -187,7 +187,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
       for (uint32_t i = 0; i < DESC_CAP; ++i) {
         auto& word = desc.words_[i];
-        if ((uint64_t)word.address_ == Descriptor::kAllocNullAddress) {
+        if (word.address_ == Descriptor::kAllocNullAddress) {
           continue;
         }
         uint64_t* addr = word.address_;
@@ -239,7 +239,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
 
     for (uint32_t i = 0; i < DESC_CAP; ++i) {
       auto& word = desc.words_[i];
-      if ((uint64_t)word.address_ == Descriptor::kAllocNullAddress) {
+      if (word.address_ == Descriptor::kAllocNullAddress) {
         continue;
       }
       int64_t val = *word.address_;
@@ -417,8 +417,7 @@ int32_t Descriptor::GetInsertPosition(nv_ptr<uint64_t> addr) {
 
   int32_t insertpos = count_;
   for (int32_t i = count_ - 1; i >= 0; i--) {
-    if ((uint64_t)addr != Descriptor::kAllocNullAddress &&
-        words_[i].address_ == addr) {
+    if (addr != Descriptor::kAllocNullAddress && words_[i].address_ == addr) {
       // Can't allow duplicate addresses because it makes the desired result of
       // the operation ambigous. If two different new values are specified for
       // the same address, what is the correct result? Also, if the operation
@@ -548,7 +547,7 @@ bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
       for (uint32_t i = 0; i < count_; ++i) {
         WordDescriptor* wd = &all_desc[i];
         // Skip entries added purely for allocating memory
-        if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
+        if (wd->address_ == Descriptor::kAllocNullAddress) {
           continue;
         }
         if (*wd->address_ != wd->GetOldValue()) {
@@ -562,7 +561,7 @@ bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
       for (uint32_t i = 0; i < count_; ++i) {
         WordDescriptor* wd = &all_desc[i];
         // Skip entries added purely for allocating memory
-        if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
+        if (wd->address_ == Descriptor::kAllocNullAddress) {
           continue;
         }
         uint64_t* addr = wd->address_;
@@ -627,7 +626,7 @@ bool Descriptor::VolatileMwCAS(uint32_t calldepth) {
   if (!rtm_install_success) {
     for (uint32_t i = 0; i < count_ && my_status == kStatusSucceeded; ++i) {
       WordDescriptor* wd = &words_[i];
-      if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
+      if (wd->address_ == Descriptor::kAllocNullAddress) {
         continue;
       }
     retry_entry:
@@ -663,7 +662,7 @@ phase_2:
   uint64_t descptr = SetFlags((uint64_t)this, kMwCASFlag);
   for (uint32_t i = 0; i < count_; i += 1) {
     WordDescriptor* wd = &words_[i];
-    if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
+    if (wd->address_ == Descriptor::kAllocNullAddress) {
       continue;
     }
     CompareExchange64(wd->address_,
@@ -735,7 +734,7 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
     for (uint32_t i = 0; i < count_ && my_status == kStatusSucceeded; ++i) {
       WordDescriptor* wd = &words_[indexes_[i]];
       // Skip entries added purely for allocating memory
-      if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
+      if (wd->address_ == Descriptor::kAllocNullAddress) {
         continue;
       }
     retry_entry:
@@ -784,7 +783,7 @@ phase_2:
   uint64_t descptr = SetFlags((uint64_t)self, kMwCASFlag);
   for (uint32_t i = 0; i < count_; i += 1) {
     WordDescriptor* wd = &words_[indexes_[i]];
-    if ((uint64_t)wd->address_ == Descriptor::kAllocNullAddress) {
+    if (wd->address_ == Descriptor::kAllocNullAddress) {
       continue;
     }
     uint64_t val = succeeded ? wd->GetNewValue() : wd->GetOldValue();

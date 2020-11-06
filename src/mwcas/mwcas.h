@@ -125,7 +125,7 @@ class FreeCallbackArray {
     static_assert(false, "not implemented");
 #endif
 #else
-    Allocator::Get()->Free((void **)mem);
+    Allocator::Get()->Free((void**)mem);
 #endif
   }
 
@@ -185,7 +185,7 @@ class alignas(kCacheLineSize) Descriptor {
 
   /// Recycle and installation policy: neither install nor recycle
   /// only used for allocation purpose
-  static const uint64_t kAllocNullAddress = 0ull;
+  static constexpr nv_ptr<uint64_t> kAllocNullAddress = nullptr;
 
   /// Value signifying an internal reserved value for a new entry
   static const uint64_t kNewValueReserved = 0ull;
@@ -493,14 +493,14 @@ class DescriptorGuard {
   /// Adds information about a new word to be modifiec by the MwCAS operator.
   /// Word descriptors are stored sorted on the word address to prevent
   /// livelocks. Return value is negative if the descriptor is full.
-  int32_t AddEntry(uint64_t* addr, uint64_t oldval, uint64_t newval,
+  int32_t AddEntry(nv_ptr<uint64_t> addr, uint64_t oldval, uint64_t newval,
                    uint32_t recycle_policy = Descriptor::kRecycleNever) {
     return desc_->AddEntry(addr, oldval, newval, recycle_policy);
   }
 
   /// Reserve a slot in the words array, but don't know what the new value is
   /// yet. The application should use GetNewValue[Ptr] to fill in later.
-  inline uint32_t ReserveAndAddEntry(uint64_t* addr, uint64_t oldval,
+  inline uint32_t ReserveAndAddEntry(nv_ptr<uint64_t> addr, uint64_t oldval,
                                      uint32_t recycle_policy) {
     return desc_->ReserveAndAddEntry(addr, oldval, recycle_policy);
   }
