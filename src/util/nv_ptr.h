@@ -52,6 +52,10 @@ class nv_ptr {
     auto allocator = reinterpret_cast<PMDKAllocator *>(Allocator::Get());
     return allocator->GetDirect<element_type>(offset);
   }
+
+  template <typename U>
+  friend nv_ptr<U> CompareExchange64(nv_ptr<U> *destination,
+                                     nv_ptr<U> new_value, nv_ptr<U> comparand);
 };
 
 template <typename T1, typename T2>
@@ -123,7 +127,6 @@ using nv_ptr = T *;
 
 #endif
 }  // namespace pmwcas
-
 #ifdef PMEM
 namespace std {
 template <typename T>
