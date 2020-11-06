@@ -419,7 +419,7 @@ class PMDKAllocator : IAllocator {
           (char*)pmemobj_direct(pmemobj_tx_alloc(nSize, TOID_TYPE_NUM(char)));
     }
     TX_ONABORT {
-      std::cout
+      LOG(DFATAL)
           << "Allocate: TXN Allocation Error, mem cannot be a DRAM address: "
           << mem << std::endl;
     }
@@ -436,7 +436,7 @@ class PMDKAllocator : IAllocator {
       *mem = off;
     }
     TX_ONABORT {
-      std::cout
+      LOG(DFATAL)
           << "Allocate: TXN Allocation Error, mem cannot be a DRAM address: "
           << mem << std::endl;
     }
@@ -480,7 +480,7 @@ class PMDKAllocator : IAllocator {
       *mem = nullptr;
     }
     TX_ONABORT {
-      std::cout
+      LOG(DFATAL)
           << "Allocate: TXN Deallocation Error, mem cannot be a DRAM address: "
           << mem << std::endl;
     }
@@ -494,7 +494,7 @@ class PMDKAllocator : IAllocator {
       *mem = 0x0;
     }
     TX_ONABORT {
-      std::cout
+      LOG(DFATAL)
           << "Allocate: TXN Deallocation Error, mem cannot be a DRAM address: "
           << mem << std::endl;
     }
