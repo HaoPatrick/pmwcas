@@ -537,7 +537,7 @@ void Descriptor::PersistentCompleteCondCAS(WordDescriptor* wd) {
 bool Descriptor::RTMInstallDescriptors(WordDescriptor all_desc[],
                                        uint64_t dirty_flag) {
   nv_ptr<Descriptor> self = this;
-  uint64_t mwcas_descptr = SetFlags(self, kMwCASFlag | dirty_flag);
+  uint64_t mwcas_descptr = SetFlags((uint64_t)self, kMwCASFlag | dirty_flag);
   uint64_t tries = 0;
   static const uint64_t kMaxTries = 4;
 
