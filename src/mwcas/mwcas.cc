@@ -701,7 +701,9 @@ bool Descriptor::PersistentMwCAS(uint32_t calldepth) {
       return words_[a].address_ < words_[b].address_;
     });
     for (uint32_t i = 1; i < count_; ++i) {
-      DCHECK(words_[indexes_[i - 1]].address_ < words_[indexes_[i]].address_);
+      if (words_[indexes_[i - 1]].address_ && words_[indexes_[i]].address_) {
+        DCHECK(words_[indexes_[i - 1]].address_ < words_[indexes_[i]].address_);
+      }
     }
     RAW_CHECK(status_ == kStatusUndecided, "invalid status");
 
