@@ -556,7 +556,7 @@ class DescriptorPool {
   uint32_t desc_per_partition_;
 
   /// Points to all descriptors
-  Descriptor* descriptors_;
+  nv_ptr<Descriptor> descriptors_;
 
   /// Number of partitions in the partition_table_
   uint32_t partition_count_;

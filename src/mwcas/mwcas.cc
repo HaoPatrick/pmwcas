@@ -75,8 +75,14 @@ DescriptorPool::DescriptorPool(uint32_t requested_pool_size,
   RAW_CHECK(pool_size_ > 0, "invalid pool size");
 
   // Create a new pool
+#ifdef PMDK
+  reinterpret_cast<PMDKAllocator*>(Allocator::Get())
+      ->AllocateOffset((uint64_t*)&descriptors_,
+                       sizeof(Descriptor) * pool_size_, false);
+#else
   Allocator::Get()->AllocateAligned(
       (void**)&descriptors_, sizeof(Descriptor) * pool_size_, kCacheLineSize);
+#endif
   RAW_CHECK(descriptors_, "out of memory");
 
   free_callbacks_ = std::make_unique<FreeCallbackArray>();
@@ -105,7 +111,8 @@ void DescriptorPool::Recovery(bool enable_stats) {
     new (&partition_table_[i]) DescriptorPartition(&epoch_, this);
   }
 
-  RAW_CHECK(descriptors_, "invalid descriptor array pointer");
+  Descriptor* descriptors = descriptors_;
+  RAW_CHECK(descriptors, "invalid descriptor array pointer");
   RAW_CHECK(pool_size_ > 0, "invalid pool size");
 
   // Initialize free callback array before scanning desc pool
@@ -123,7 +130,7 @@ void DescriptorPool::Recovery(bool enable_stats) {
   // begin recovery process
   // Iterate over the whole desc pool, see if there's anything we can do
   for (uint32_t i = 0; i < pool_size_; ++i) {
-    auto& desc = descriptors_[i];
+    auto& desc = descriptors[i];
 
     desc.assert_valid_status();
 
@@ -263,8 +270,9 @@ void DescriptorPool::Recovery(bool enable_stats) {
 void DescriptorPool::InitDescriptors() {
   // (Re-)initialize descriptors. Any recovery business should be done by now,
   // start as a clean slate.
-  RAW_CHECK(descriptors_, "null descriptor pool");
-  memset(descriptors_, 0, sizeof(Descriptor) * pool_size_);
+  Descriptor* descriptors = descriptors_;
+  RAW_CHECK(descriptors, "null descriptor pool");
+  memset(descriptors, 0, sizeof(Descriptor) * pool_size_);
 
   // Distribute this many descriptors per partition
   RAW_CHECK(pool_size_ > partition_count_,
@@ -273,7 +281,7 @@ void DescriptorPool::InitDescriptors() {
   for (uint32_t i = 0; i < partition_count_; ++i) {
     DescriptorPartition* p = partition_table_ + i;
     for (uint32_t d = 0; d < desc_per_partition_; ++d) {
-      Descriptor* desc = descriptors_ + i * desc_per_partition_ + d;
+      Descriptor* desc = descriptors + i * desc_per_partition_ + d;
       new (desc) Descriptor(p, free_callbacks_.get());
       desc->next_ptr_ = p->free_list;
       p->free_list = desc;
@@ -283,7 +291,7 @@ void DescriptorPool::InitDescriptors() {
 #ifdef PMEM
   // Flush the entire pool at (re-)start. Then it would be ready to
   // conduct PMwCAS operations.
-  NVRAM::Flush(sizeof(Descriptor) * pool_size_, descriptors_);
+  NVRAM::Flush(sizeof(Descriptor) * pool_size_, descriptors);
 #endif
 }
 
