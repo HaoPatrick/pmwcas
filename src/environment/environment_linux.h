@@ -415,8 +415,8 @@ class PMDKAllocator : IAllocator {
   void Allocate(void** mem, size_t nSize) override {
     TX_BEGIN(pop) {
       pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
-      *mem =
-          (char*)pmemobj_direct(pmemobj_tx_alloc(nSize, TOID_TYPE_NUM(char)));
+      *mem = (char*)pmemobj_direct(
+          pmemobj_tx_xalloc(nSize, TOID_TYPE_NUM(char), POBJ_XALLOC_NO_FLUSH));
     }
     TX_ONABORT {
       LOG(DFATAL)
@@ -429,7 +429,8 @@ class PMDKAllocator : IAllocator {
   void AllocateOffset(uint64_t* mem, size_t nSize, bool recycle = true) {
     TX_BEGIN(pop) {
       pmemobj_tx_add_range_direct(mem, sizeof(uint64_t));
-      uint64_t off = pmemobj_tx_alloc(nSize, TOID_TYPE_NUM(char)).off;
+      uint64_t off =
+          pmemobj_tx_xalloc(nSize, TOID_TYPE_NUM(char), POBJ_XALLOC_NO_FLUSH).off;
       if (recycle) {
         off = SetRecycleFlag(off);
       }
