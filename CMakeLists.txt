@@ -67,18 +67,6 @@ if(WITH_RTM)
   message("-- RTM configured")
 endif()
 
-# Turn off eADR by default
-option(WITH_EADR "Issue instructions for eADR platforms" OFF)
-if(WITH_EADR)
-  string(TOUPPER ${PMEM_BACKEND} PMEM_BACKEND)
-  if(${PMEM_BACKEND} STREQUAL "VOLATILE")
-    message(FATAL_ERROR "eADR cannot be enabled for VOLATILE backend")
-  endif()
-
-  add_definitions(-DEADR)
-  message("-- eADR configured")
-endif()
-
 ##################### PMDK ####################
 if(${PMEM_BACKEND} STREQUAL "PMDK")
   set(PMDK_LIB_PATH "/usr/local/lib" CACHE STRING "PMDK lib install path")
