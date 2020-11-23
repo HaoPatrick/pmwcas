@@ -583,7 +583,11 @@ class DescriptorPool {
   Descriptor* GetDescriptor() { return descriptors_; }
 
 #ifdef PMEM
-  void Recovery(bool enable_stats);
+  /// Run recovery protocol on the descriptor pool.
+  /// If the provided partition_count is zero, keep partition_count_ in
+  /// the pool as is. Otherwise, repartition the pool (useful when the
+  /// number of worker threads changes).
+  void Recovery(uint32_t partition_count, bool enable_stats);
 #endif
 
   ~DescriptorPool();

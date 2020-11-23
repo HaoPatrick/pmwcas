@@ -187,7 +187,7 @@ GTEST_TEST(PMwCASTest, RecoverySingleThreaded) {
   ArrayPreScan(array);
 
   /// Step 4: perform the recovery
-  descriptor_pool->Recovery(false);
+  descriptor_pool->Recovery(0, false);
 
   ArraySanityCheck(array);
 

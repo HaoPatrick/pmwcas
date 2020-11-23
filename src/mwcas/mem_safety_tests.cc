@@ -1025,7 +1025,7 @@ GTEST_TEST(PMwCASMemorySafetyRecoveryTest, MultiThreadRecovery) {
 
   ArrayPreScan((uint64_t *)array);
 
-  pool->Recovery(false);
+  pool->Recovery(0, false);
 
   // We have 3 more allocations than just the nodes:
   // * The DescriptorPool object

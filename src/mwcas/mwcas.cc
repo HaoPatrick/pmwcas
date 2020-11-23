@@ -91,18 +91,37 @@ DescriptorPool::DescriptorPool(uint32_t requested_pool_size,
 }
 
 #ifdef PMEM
-void DescriptorPool::Recovery(bool enable_stats) {
+void DescriptorPool::Recovery(uint32_t requested_partition_count,
+                              bool enable_stats) {
   MwCASMetrics::enabled = enable_stats;
   RecoveryMetrics::Reset();
 
-  auto s = MwCASMetrics::Initialize();
-  RAW_CHECK(s.ok(), "failed initializing metric objects");
+  if (enable_stats) {
+    auto s = MwCASMetrics::Initialize();
+    RAW_CHECK(s.ok(), "failed initializing metric objects");
+  }
 
   new (&epoch_) EpochManager;
-  s = epoch_.Initialize();
+  auto s = epoch_.Initialize();
   RAW_CHECK(s.ok(), "epoch initialization failure");
 
-  RAW_CHECK(partition_count_ > 0, "invalid partition count");
+  // Round partitions to a power of two but no higher than 1024
+  if (requested_partition_count) {
+    uint32_t new_partition_count = 1;
+    for (uint32_t exp = 1; exp < 10; exp++) {
+      if (requested_partition_count <= new_partition_count) {
+        break;
+      }
+      new_partition_count *= 2;
+    }
+    LOG(INFO) << "Descriptor pool redistributed into " << new_partition_count
+              << " partitions (was " << partition_count_ << ")";
+    partition_count_ = new_partition_count;
+  }
+
+  desc_per_partition_ = pool_size_ / partition_count_;
+  RAW_CHECK(desc_per_partition_ > 0, "descriptor per partition is 0");
+
   partition_table_ = (DescriptorPartition*)malloc(sizeof(DescriptorPartition) *
                                                   partition_count_);
   RAW_CHECK(nullptr != partition_table_, "out of memory");
