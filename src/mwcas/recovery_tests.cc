@@ -1,15 +1,16 @@
 // Copyright (c) Xiangpeng Hao (haoxiangpeng@hotmail.com). All rights reserved.
 // Licensed under the MIT license.
 
+#include <fcntl.h>
 #include <gtest/gtest.h>
 #include <stdlib.h>
-#include <fcntl.h>
 
 #include <chrono>
 #include <random>
 #include <thread>
 
 #include "common/allocator_internal.h"
+#include "environment/environment_linux.h"
 #include "include/allocator.h"
 #include "include/environment.h"
 #include "include/pmwcas.h"
@@ -17,7 +18,6 @@
 #include "mwcas/mwcas.h"
 #include "util/auto_ptr.h"
 #include "util/random_number_generator.h"
-#include "environment/environment_linux.h"
 
 static const uint64_t ARRAY_SIZE = 1024;
 static const uint8_t ARRAY_INIT_VALUE = 0;
@@ -121,17 +121,16 @@ void child_process_work(sem_t* sem) {
   auto* root_obj = (RootObj*)allocator_->GetRoot(sizeof(RootObj));
 
   pmemobj_zalloc(allocator_->GetPool(), &root_obj->pool_addr,
-    sizeof(pmwcas::DescriptorPool), TOID_TYPE_NUM(char));
+                 sizeof(pmwcas::DescriptorPool), TOID_TYPE_NUM(char));
   new (pmemobj_direct(root_obj->pool_addr))
       pmwcas::DescriptorPool(10000, WORKLOAD_THREAD_CNT + 1, false);
 
   pmemobj_zalloc(allocator_->GetPool(), &root_obj->array,
-    sizeof(uint64_t) * ARRAY_SIZE, TOID_TYPE_NUM(char));
+                 sizeof(uint64_t) * ARRAY_SIZE, TOID_TYPE_NUM(char));
 
   auto descriptor_pool =
-    (pmwcas::DescriptorPool*)pmemobj_direct(root_obj->pool_addr);
-  uint64_t* array =
-    (uint64_t*)pmemobj_direct(root_obj->array);
+      (pmwcas::DescriptorPool*)pmemobj_direct(root_obj->pool_addr);
+  uint64_t* array = (uint64_t*)pmemobj_direct(root_obj->array);
   memset(array, ARRAY_INIT_VALUE, sizeof(uint64_t) * ARRAY_SIZE);
   pmwcas::NVRAM::Flush(sizeof(RootObj), root_obj);
   pmwcas::NVRAM::Flush(sizeof(DescriptorPool), descriptor_pool);
@@ -182,9 +181,8 @@ GTEST_TEST(PMwCASTest, RecoverySingleThreaded) {
   auto* allocator_ = (PMDKAllocator*)Allocator::Get();
   auto* root_obj = (RootObj*)allocator_->GetRoot(sizeof(RootObj));
   auto descriptor_pool =
-    (pmwcas::DescriptorPool*)pmemobj_direct(root_obj->pool_addr);
-  uint64_t* array =
-    (uint64_t*)pmemobj_direct(root_obj->array);
+      (pmwcas::DescriptorPool*)pmemobj_direct(root_obj->pool_addr);
+  uint64_t* array = (uint64_t*)pmemobj_direct(root_obj->array);
 
   ArrayPreScan(array);
 
@@ -199,8 +197,8 @@ GTEST_TEST(PMwCASTest, RecoverySingleThreaded) {
     auto value = array[i];
 
     if (!pmwcas::Descriptor::IsCleanPtr(value)) {
-      LOG(INFO) << "Invalid value 0x" << std::hex << value
-                << " at " << &array[i] << std::endl;
+      LOG(INFO) << "Invalid value 0x" << std::hex << value << " at "
+                << &array[i] << std::endl;
     }
     // ASSERT_TRUE(pmwcas::Descriptor::IsCleanPtr(value));
 
