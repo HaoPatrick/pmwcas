@@ -92,7 +92,7 @@ template <typename T> T FetchAdd64(T* destination, T add_value) {
 template <typename T> T Decrement64(T* destination) {
   static_assert(sizeof(T) <= AtomicMaxSize,
       "Type must be aligned to native pointer alignment.");
-  return ::__atomic_sub_fetch(destination, 1);
+  return ::__atomic_sub_fetch(destination, 1, __ATOMIC_SEQ_CST);
 }
 
 template <typename T> T Decrement32(T* destination) {
