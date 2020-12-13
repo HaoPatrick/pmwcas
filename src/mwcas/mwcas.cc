@@ -92,7 +92,7 @@ DescriptorPool::DescriptorPool(uint32_t requested_pool_size,
 
 #ifdef PMEM
 void DescriptorPool::Recovery(uint32_t requested_partition_count,
-                              bool enable_stats) {
+                              bool enable_stats, bool clear_free_callbacks) {
   MwCASMetrics::enabled = enable_stats;
   RecoveryMetrics::Reset();
 
@@ -134,10 +134,9 @@ void DescriptorPool::Recovery(uint32_t requested_partition_count,
   RAW_CHECK(descriptors, "invalid descriptor array pointer");
   RAW_CHECK(pool_size_ > 0, "invalid pool size");
 
-  // Initialize free callback array before scanning desc pool
-  // Release first: whatever was there is not interpretable
-  free_callbacks_.release();
-  free_callbacks_ = std::make_unique<FreeCallbackArray>();
+  if (clear_free_callbacks) {
+    ClearFreeCallbackArray();
+  }
 
 #ifdef PMDK
   auto new_pmdk_pool =

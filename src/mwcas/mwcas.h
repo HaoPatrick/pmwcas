@@ -137,10 +137,11 @@ class FreeCallbackArray {
   FreeCallbackArray& operator=(const FreeCallbackArray&) = delete;
 
   /// Register a FreeCallback in the array
-  void RegisterFreeCallback(FreeCallback fc) {
+  Idx RegisterFreeCallback(FreeCallback fc) {
     RAW_CHECK(next_ < kFreeCallbackCapacity, "too many free callbacks");
     RAW_CHECK(fc != nullptr, "free callbacks cannot be nullptr");
-    array_[next_++] = fc;
+    array_[next_] = fc;
+    return next_++;
   }
 
   /// Look up a FreeCallback in the array
@@ -583,11 +584,19 @@ class DescriptorPool {
   Descriptor* GetDescriptor() { return descriptors_; }
 
 #ifdef PMEM
+  inline void ClearFreeCallbackArray() {
+    // Initialize free callback array before scanning desc pool
+    // Release first: whatever was there is not interpretable
+    free_callbacks_.release();
+    free_callbacks_ = std::make_unique<FreeCallbackArray>();
+  }
+
   /// Run recovery protocol on the descriptor pool.
   /// If the provided partition_count is zero, keep partition_count_ in
   /// the pool as is. Otherwise, repartition the pool (useful when the
   /// number of worker threads changes).
-  void Recovery(uint32_t partition_count, bool enable_stats);
+  void Recovery(uint32_t partition_count, bool enable_stats,
+                bool clear_free_callbacks = true);
 #endif
 
   ~DescriptorPool();
@@ -606,7 +615,7 @@ class DescriptorPool {
   inline DescriptorGuard AllocateDescriptor() { return AllocateDescriptor(0); }
 
   // Register a FreeCallback in the array
-  void RegisterFreeCallback(FreeCallbackArray::FreeCallback fc) {
+  size_t RegisterFreeCallback(FreeCallbackArray::FreeCallback fc) {
     return free_callbacks_->RegisterFreeCallback(fc);
   }
 };
