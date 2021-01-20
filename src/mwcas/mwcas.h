@@ -81,6 +81,7 @@
 #include "src/common/environment_internal.h"
 #include "src/common/epoch.h"
 #include "src/common/garbage_list_unsafe.h"
+#include "src/common/garbage_list_unsafe_persistent.h"
 #include "src/util/nv_ptr.h"
 #include "src/util/nvram.h"
 
