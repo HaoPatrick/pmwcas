@@ -313,7 +313,13 @@ void DescriptorPool::InitDescriptors() {
 #endif
 }
 
-DescriptorPool::~DescriptorPool() { MwCASMetrics::Uninitialize(); }
+DescriptorPool::~DescriptorPool() {
+  for (uint32_t i = 0; i < partition_count_; ++i) {
+    DescriptorPartition* p = partition_table_ + i;
+    p->~DescriptorPartition();
+  }
+  MwCASMetrics::Uninitialize();
+}
 
 DescriptorGuard DescriptorPool::AllocateDescriptor(FreeCallbackArray::Idx fc) {
   thread_local DescriptorPartition* tls_part = nullptr;
