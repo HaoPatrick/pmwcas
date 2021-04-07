@@ -383,7 +383,7 @@ class PMDKAllocator : IAllocator {
                                                     uint64_t pool_size) {
     return [pool_name, layout_name, pool_size](IAllocator*& allocator) {
       int n = posix_memalign(reinterpret_cast<void**>(&allocator),
-                             kCacheLineSize, sizeof(DefaultAllocator));
+                             kCacheLineSize, sizeof(PMDKAllocator));
       if (n || !allocator) return Status::Corruption("Out of memory");
 
       PMEMobjpool* tmp_pool;
